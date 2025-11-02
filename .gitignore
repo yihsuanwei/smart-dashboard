@@ -1,0 +1,36 @@
+# 作業系統
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# 編輯器 / IDE
+.vscode/
+.history
+.idea/
+*.swp
+*.swo
+*~
+.vs/
+
+# 暫存/快取
+*.log
+*.tmp
+*.cache
+.temp/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+.venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+
+# Local File
+/uploaded_data

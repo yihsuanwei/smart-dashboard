@@ -1,0 +1,1647 @@
+import streamlit as st
+from utils import list_uploaded_files, load_data
+import pandas as pd
+
+import base64
+
+
+def render_kpi_widget(title, value, yoy_pct=None, mom_pct=None, prefix="", suffix="", show_change_percent=True):
+    """渲染 KPI Widget"""
+    def format_change(val, show_percent=True):
+        if val is None or val == "-":
+            return "-"
+
+        # 格式化數值（加千分位）
+        if show_percent:
+            formatted_val = f"{val:.1f}%"
+        else:
+            formatted_val = f"{val:,.0f} bps"
+
+        if val > 0:
+            return f"<span style='color:green'>▲ {formatted_val}</span>"
+        elif val < 0:
+            return f"<span style='color:red'>▼ {abs(val):,.1f}{' bps' if not show_percent else '%'}</span>"
+        else:
+            return f"<span style='color:black'>0.0{' bps' if not show_percent else '%'}</span>"
+
+    yoy_html = format_change(yoy_pct, show_change_percent)
+    mom_html = format_change(mom_pct, show_change_percent)
+
+    # 格式化數值
+    if isinstance(value, (int, float)):
+        # 如果是小數，保留小數位；如果是整數，顯示為整數
+        if isinstance(value, float) and value % 1 != 0:
+            formatted_value = f"{value:,.2f}"
+        else:
+            formatted_value = f"{round(value):,}"
+    else:
+        formatted_value = str(value)
+
+    st.markdown(f"""
+    <div style="
+        border:1px solid #e0e0e0; border-radius:10px; padding:15px;
+        background-color:white; box-shadow:0 2px 5px rgba(0,0,0,0.05);
+        text-align:center; height:120px; display:flex; flex-direction:column; justify-content:center;">
+      <div style="font-size:17px; color:#555; margin-bottom:5px;">{title}</div>
+      <div style="font-size:28px; font-weight:700; margin:5px 0; color:#000;">{prefix}{formatted_value}{suffix}</div>
+      <div style="font-size:13px; color:#888;">
+        YoY {yoy_html} | MoM {mom_html}
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+
+def render_kpi_widget_with_percentage(title, value, percentage, yoy_pct=None, mom_pct=None):
+    """渲染帶有百分比的 KPI Widget（用於 Promotion/Deal/Coupon OPS）"""
+    def format_change(val):
+        if val is None or val == "-":
+            return "-"
+        if val > 0:
+            return f"<span style='color:green'>▲ {val:.1f}%</span>"
+        elif val < 0:
+            return f"<span style='color:red'>▼ {abs(val):.1f}%</span>"
+        else:
+            return f"<span style='color:black'>0.0%</span>"
+
+    yoy_html = format_change(yoy_pct)
+    mom_html = format_change(mom_pct)
+    formatted_value = f"${round(value):,} <span style='font-size:17px; color:#888'>({percentage:.0f}%)</span>"
+
+    st.markdown(f"""
+    <div style="
+        border:1px solid #e0e0e0; border-radius:10px; padding:15px;
+        background-color:white; box-shadow:0 2px 5px rgba(0,0,0,0.05);
+        text-align:center; height:120px; display:flex; flex-direction:column; justify-content:center;">
+      <div style="font-size:17px; color:#555; margin-bottom:5px;">{title}</div>
+      <div style="font-size:28px; font-weight:700; margin:5px 0; color:#000;">{formatted_value}</div>
+      <div style="font-size:13px; color:#888;">
+        YoY {yoy_html} | MoM {mom_html}
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+
+def extract_ytd_metric(df, column_keywords, row_keywords=['this year so far'], change_keywords=['change from last year']):
+    """
+    從 Total Year Change 數據中提取 YTD 指標
+
+    Args:
+        df: DataFrame
+        column_keywords: 要搜尋的欄位關鍵字列表（小寫）
+        row_keywords: YTD 行的關鍵字列表
+        change_keywords: 變化百分比行的關鍵字列表
+
+    Returns:
+        (value, change_pct): 數值和變化百分比
+    """
+    value = 0
+    change_pct = None
+
+    # 尋找目標欄位
+    target_cols = [col for col in df.columns if any(kw in col.lower() for kw in column_keywords)]
+
+    if target_cols:
+        target_col = target_cols[0]
+
+        # 尋找 YTD row
+        ytd_row = df[df.iloc[:, 0].astype(str).str.lower().str.contains('|'.join(row_keywords), na=False)]
+        if not ytd_row.empty and target_col in ytd_row.columns:
+            value = ytd_row[target_col].iloc[0]
+
+        # 尋找變化百分比
+        change_row = df[df.iloc[:, 0].astype(str).str.lower().str.contains('|'.join(change_keywords), na=False)]
+        if not change_row.empty and target_col in change_row.columns:
+            change_pct = change_row[target_col].iloc[0]
+
+    return value, change_pct
+
+
+def match_date(row_date, target_date):
+    """日期匹配函數"""
+    try:
+        if '/' in str(row_date) and '/' in str(target_date):
+            row_parsed = pd.to_datetime(str(row_date), format='%m/%d/%Y')
+            target_parsed = pd.to_datetime(str(target_date), format='%m/%d/%Y')
+            return row_parsed == target_parsed
+        else:
+            return str(row_date) == str(target_date)
+    except:
+        return str(row_date) == str(target_date)
+
+
+def calculate_metric_yoy_mom(sales_df, date_col, metric_col, original_date, cvr_mode=False):
+    """
+    計算指標的 YoY 和 MoM
+
+    Args:
+        sales_df: 數據 DataFrame
+        date_col: 日期欄位名稱
+        metric_col: 指標欄位名稱
+        original_date: 當前日期字串
+        cvr_mode: 是否為 CVR 模式（使用減法而非百分比）
+
+    Returns:
+        (current_value, yoy_change, mom_change)
+    """
+    current_value = 0
+    yoy_change = None
+    mom_change = None
+
+    # 取得當前數據
+    mask = sales_df[date_col].apply(lambda x: match_date(x, original_date))
+    current_data = sales_df[mask][metric_col].dropna()
+    if not current_data.empty:
+        current_value = current_data.iloc[0]
+
+    try:
+        current_date = pd.to_datetime(original_date)
+
+        # 計算前一個月的日期
+        last_month_date = current_date - pd.DateOffset(months=1)
+        last_month_str = last_month_date.strftime('%Y/%m/%d')
+        last_month_mask = sales_df[date_col].apply(lambda x: match_date(x, last_month_str))
+        last_month_data = sales_df[last_month_mask][metric_col].dropna()
+
+        # 計算去年同月的日期
+        last_year_date = current_date - pd.DateOffset(years=1)
+        last_year_str = last_year_date.strftime('%Y/%m/%d')
+        last_year_mask = sales_df[date_col].apply(lambda x: match_date(x, last_year_str))
+        last_year_data = sales_df[last_year_mask][metric_col].dropna()
+
+        # 計算 YoY
+        if not last_year_data.empty:
+            last_year_value = last_year_data.iloc[0]
+            if cvr_mode:
+                # CVR 使用差值 * 10000 = bps
+                yoy_change = (current_value - last_year_value) * 10000
+            elif last_year_value != 0:
+                yoy_change = ((current_value - last_year_value) / last_year_value) * 100
+
+        # 計算 MoM
+        if not last_month_data.empty:
+            last_month_value = last_month_data.iloc[0]
+            if cvr_mode:
+                # CVR 使用差值 * 10000 = bps
+                mom_change = (current_value - last_month_value) * 10000
+            elif last_month_value != 0:
+                mom_change = ((current_value - last_month_value) / last_month_value) * 100
+    except:
+        pass
+
+    return current_value, yoy_change, mom_change
+
+
+def render_business_metric_widget(sales_df, date_col, original_date, metric_config):
+    """
+    渲染業務指標 Widget
+
+    Args:
+        sales_df: 數據 DataFrame
+        date_col: 日期欄位名稱
+        original_date: 當前日期
+        metric_config: 配置字典 {
+            'title': 'Widget 標題',
+            'column_keywords': ['keyword1', 'keyword2'],  # 搜尋欄位的關鍵字
+            'cvr_mode': False,  # 是否為 CVR 模式
+            'prefix': '$',  # 數值前綴
+            'suffix': '%'   # 數值後綴
+        }
+    """
+    # 尋找目標欄位
+    target_cols = [col for col in sales_df.columns
+                   if any(kw in col.lower() for kw in metric_config['column_keywords'])]
+
+    if target_cols:
+        # 優先選擇不包含特定後綴的基本欄位
+        basic_cols = [col for col in target_cols
+                      if not any(suffix in col.lower()
+                                for suffix in ['this year so far', '% change', 'last year'])]
+        metric_col = basic_cols[0] if basic_cols else target_cols[0]
+
+        # 計算指標
+        value, yoy, mom = calculate_metric_yoy_mom(
+            sales_df, date_col, metric_col, original_date,
+            cvr_mode=metric_config.get('cvr_mode', False)
+        )
+
+        # 格式化數值
+        if isinstance(value, (int, float)):
+            if metric_config.get('cvr_mode', False):
+                # CVR 模式：保留兩位小數
+                value = round(value, 2)
+            elif metric_config.get('decimal_mode', False):
+                # 小數模式（如 Average sales/order item）：保留兩位小數
+                value = round(value, 2)
+            else:
+                # 其他模式：四捨五入為整數
+                value = round(value)
+
+        # 渲染 Widget
+        render_kpi_widget(
+            metric_config['title'],
+            value,
+            yoy,
+            mom,
+            prefix=metric_config.get('prefix', ''),
+            suffix=metric_config.get('suffix', ''),
+            show_change_percent=metric_config.get('show_change_percent', True)
+        )
+
+
+def calculate_yoy_mom_from_df(df, column_name, current_year, current_month):
+    """
+    從 DataFrame 計算 YoY 和 MoM（用於 Advertising 區塊）
+
+    Returns:
+        (current_value, yoy_change, mom_change)
+    """
+    yoy_change = None
+    mom_change = None
+    current_value = 0
+
+    if column_name in df.columns:
+        # 當前月份數據
+        current_mask = (df['calendar_year'] == current_year) & (df['calendar_month'] == current_month)
+        current_data = df[current_mask][column_name].dropna()
+        if not current_data.empty:
+            current_value = current_data.sum()
+
+            # 計算去年同月 (YoY)
+            last_year = current_year - 1
+            last_year_mask = (df['calendar_year'] == last_year) & (df['calendar_month'] == current_month)
+            last_year_data = df[last_year_mask][column_name].dropna()
+            if not last_year_data.empty:
+                last_year_value = last_year_data.sum()
+                if last_year_value != 0:
+                    yoy_change = ((current_value - last_year_value) / last_year_value) * 100
+                else:
+                    yoy_change = "-"
+
+            # 計算上個月 (MoM)
+            if current_month == 1:
+                last_month = 12
+                last_month_year = current_year - 1
+            else:
+                last_month = current_month - 1
+                last_month_year = current_year
+
+            last_month_mask = (df['calendar_year'] == last_month_year) & (df['calendar_month'] == last_month)
+            last_month_data = df[last_month_mask][column_name].dropna()
+            if not last_month_data.empty:
+                last_month_value = last_month_data.sum()
+                if last_month_value != 0:
+                    mom_change = ((current_value - last_month_value) / last_month_value) * 100
+                else:
+                    mom_change = "-"
+
+    return current_value, yoy_change, mom_change
+
+
+st.set_page_config(page_title="Multi-File Analysis", page_icon="📊", layout="wide")
+st.title("📊 Spark Performance Review")
+
+# 定義五種文件類型
+file_types = ["Sales Traffic Report", "Total Year Change", "Month YoY", "P0 MCID MBR", "Asin Report"]
+
+# 創建五個欄位來顯示不同的文件選擇器
+col1, col2, col3 = st.columns(3)
+col4, col5 = st.columns(2)
+columns = [col1, col2, col3, col4, col5]
+
+# 初始化 session_state 來保存數據
+if 'multi_file_selected_files' not in st.session_state:
+    st.session_state.multi_file_selected_files = {}
+if 'multi_file_loaded_data' not in st.session_state:
+    st.session_state.multi_file_loaded_data = {}
+
+# 儲存選中的檔案
+selected_files = {}
+loaded_data = {}
+
+for i, file_type in enumerate(file_types):
+    with columns[i]:
+        st.subheader(f"📁 {file_type}")
+
+        # 獲取該類型的檔案
+        files = list_uploaded_files(file_type)
+
+        if files:
+            file_options = {f.name: f for f in files}
+            selected_name = st.selectbox(
+                f"選擇 {file_type} 檔案",
+                options=list(file_options.keys()),
+                key=f"select_{file_type.replace(' ', '_').lower()}"
+            )
+
+            if selected_name and selected_name != "請選擇檔案...":
+                selected_file = file_options[selected_name]
+                selected_files[file_type] = selected_file
+
+                # 檢查是否需要重新加載檔案（檔案名稱改變了）
+                cache_key = f"{file_type}_filename"
+                if cache_key not in st.session_state or st.session_state[cache_key] != selected_name:
+                    # 檔案改變了，需要重新讀取
+                    df, error = load_data(selected_file)
+                    if error:
+                        st.error(f"無法讀取檔案: {error}")
+                    else:
+                        # 儲存到 session_state
+                        st.session_state.multi_file_loaded_data[file_type] = df
+                        st.session_state[cache_key] = selected_name
+                        loaded_data[file_type] = df
+                else:
+                    # 使用快取的數據
+                    if file_type in st.session_state.multi_file_loaded_data:
+                        loaded_data[file_type] = st.session_state.multi_file_loaded_data[file_type]
+
+                # 顯示資料預覽
+                if file_type in loaded_data:
+                    if st.checkbox(f"預覽 {file_type}", key=f"preview_{file_type.replace(' ', '_').lower()}"):
+                        st.dataframe(loaded_data[file_type].head(), use_container_width=True)
+        else:
+            st.info(f"目前沒有 {file_type} 類型的檔案")
+
+# 分隔線
+st.markdown("---")
+
+# Overall Sales Summary 區塊
+if "Total Year Change" in loaded_data:
+    st.header("📈 Overall Sales Summary")
+
+    sales_df = loaded_data["Total Year Change"]
+
+    # 創建四個 widget 欄位
+    widget_col1, widget_col2, widget_col3, widget_col4 = st.columns(4)
+
+    # 定義四個指標的配置
+    ytd_metrics = [
+        {
+            'column': widget_col1,
+            'title': 'YTD Sales',
+            'keywords': ['ordered product sales'],
+            'prefix': '$',
+            'decimal': False
+        },
+        {
+            'column': widget_col2,
+            'title': 'YTD - Total Order Items',
+            'keywords': ['total order items'],
+            'prefix': '',
+            'decimal': False
+        },
+        {
+            'column': widget_col3,
+            'title': 'YTD - Units Ordered',
+            'keywords': ['units ordered'],
+            'prefix': '',
+            'decimal': False
+        },
+        {
+            'column': widget_col4,
+            'title': 'Average sales/order item',
+            'keywords': ['average sales/order item'],
+            'prefix': '$',
+            'decimal': True  # 需要保留兩位小數
+        }
+    ]
+
+    # 批量渲染 YTD 指標
+    for metric in ytd_metrics:
+        with metric['column']:
+            value, change = extract_ytd_metric(sales_df, metric['keywords'])
+            # 根據配置決定是否保留小數
+            if isinstance(value, (int, float)):
+                value_rounded = round(value, 2) if metric.get('decimal', False) else round(value)
+            else:
+                value_rounded = value
+            render_kpi_widget(metric['title'], value_rounded, change, prefix=metric['prefix'])
+
+    # 月度銷售趨勢圖
+    if "Month YoY" in loaded_data:
+
+        month_df = loaded_data["Month YoY"]
+
+        # 尋找月份欄位（第一欄）
+        month_col = month_df.columns[0]
+
+        # 尋找所需的欄位
+        this_year_col = None
+        last_year_col = None
+        yoy_col = None
+
+        for col in month_df.columns:
+            if 'this year so far' in col.lower() and 'sales' in col.lower():
+                this_year_col = col
+            elif 'last year' in col.lower() and 'sales' in col.lower() and 'this year' not in col.lower():
+                last_year_col = col
+            elif 'yoy' in col.lower() and 'sales' in col.lower():
+                yoy_col = col
+
+        if this_year_col and last_year_col and yoy_col:
+            # 篩選出有效的月份資料（Jan, Feb, Mar...）
+            valid_months = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec']
+            chart_data = month_df[month_df[month_col].astype(str).str.lower().isin(valid_months)].copy()
+
+            if not chart_data.empty:
+                import plotly.graph_objects as go
+
+                fig = go.Figure()
+
+                # 添加長條圖 - This year so far (深橘色)
+                fig.add_trace(go.Bar(
+                    x=chart_data[month_col],
+                    y=chart_data[this_year_col],
+                    name='This Year',
+                    marker_color='#FF6B35',  # 深橘色
+                    yaxis='y'
+                ))
+
+                # 添加長條圖 - Last year (淺橘色)
+                fig.add_trace(go.Bar(
+                    x=chart_data[month_col],
+                    y=chart_data[last_year_col],
+                    name='Last Year',
+                    marker_color='#FFB088',  # 淺橘色
+                    yaxis='y'
+                ))
+
+                # 添加折線圖 - YoY (咖啡色)
+                # 處理 NaN 值：在文本中顯示為空字串
+                yoy_text = [f'{val}%' if pd.notna(val) else '' for val in chart_data[yoy_col]]
+
+                fig.add_trace(go.Scatter(
+                    x=chart_data[month_col],
+                    y=chart_data[yoy_col],
+                    name='YoY %',
+                    mode='lines+markers+text',
+                    line=dict(color='#8B4513', width=2),  # 咖啡色
+                    marker=dict(size=8),
+                    text=yoy_text,
+                    textposition='top center',
+                    yaxis='y2',
+                    connectgaps=False  # 當有 NaN 時不連接線段
+                ))
+
+                # 設置雙軸
+                fig.update_layout(
+                    yaxis=dict(
+                        title='Sales ($)',
+                        side='left',
+                        separatethousands=True
+                    ),
+                    yaxis2=dict(
+                        title='YoY Change (%)',
+                        overlaying='y',
+                        side='right'
+                    ),
+                    barmode='group',
+                    hovermode='x unified',
+                    legend=dict(
+                        orientation="h",
+                        yanchor="bottom",
+                        y=1.02,
+                        xanchor="right",
+                        x=1
+                    ),
+                    height=400
+                )
+
+                st.plotly_chart(fig, use_container_width=True)
+
+                # 準備表格資料
+                # 創建包含所有12個月的完整列表
+                all_months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+
+                # 建立月份對照字典
+                month_data = {}
+                for idx, month in enumerate(chart_data[month_col].tolist()):
+                    month_data[month] = {
+                        'last_year': chart_data[last_year_col].iloc[idx],
+                        'this_year': chart_data[this_year_col].iloc[idx],
+                        'yoy': chart_data[yoy_col].iloc[idx]
+                    }
+
+                # 準備完整的12個月資料（使用 None 代替 0 讓儲存格顯示為空）
+                last_year_sales = []
+                this_year_sales = []
+                yoy_values = []
+                original_this_year_has_value = []  # 追蹤原始資料中 This Year 是否有值
+
+                for month in all_months:
+                    if month in month_data:
+                        last_year_val = month_data[month]['last_year']
+                        # 檢查是否為有效數值（非 NaN 且非 0）
+                        if pd.notna(last_year_val) and last_year_val != 0:
+                            last_year_sales.append(round(last_year_val))
+                        else:
+                            last_year_sales.append(None)
+
+                        this_year_val = month_data[month]['this_year']
+                        if pd.notna(this_year_val) and this_year_val != 0:
+                            this_year_sales.append(round(this_year_val))
+                            original_this_year_has_value.append(True)
+                        else:
+                            this_year_sales.append(None)
+                            original_this_year_has_value.append(False)
+
+                        # 如果 This Year 為 0 或 None，YoY 也設為 None
+                        if pd.isna(this_year_val) or this_year_val == 0:
+                            yoy_values.append(None)
+                        else:
+                            yoy_val = month_data[month]['yoy']
+                            # 檢查 yoy_val 是否為有效數值
+                            if pd.notna(yoy_val) and yoy_val != 0:
+                                yoy_values.append(round(yoy_val))
+                            else:
+                                yoy_values.append(None)
+                    else:
+                        last_year_sales.append(None)
+                        this_year_sales.append(None)
+                        yoy_values.append(None)
+                        original_this_year_has_value.append(False)
+
+                # 初始化 session state 來保存編輯狀態
+                # 檢查 Month YoY 檔案是否改變
+                current_month_yoy_file = st.session_state.get('Month YoY_filename', None)
+                if 'monthly_sales_data' not in st.session_state or 'monthly_sales_last_file' not in st.session_state or st.session_state.monthly_sales_last_file != current_month_yoy_file:
+                    # 檔案改變了，重新初始化數據
+                    st.session_state.monthly_sales_data = pd.DataFrame({
+                        'Metric': ['Last Year Sales', 'This Year Sales', 'YoY (%)'],
+                        **{month: [last_year_sales[i], this_year_sales[i], yoy_values[i]] for i, month in enumerate(all_months)}
+                    })
+                    # 儲存原始的 This Year 是否有值的資訊
+                    st.session_state.original_this_year_has_value = {month: original_this_year_has_value[i] for i, month in enumerate(all_months)}
+                    # 記錄當前使用的檔案
+                    st.session_state.monthly_sales_last_file = current_month_yoy_file
+
+                # 提示訊息
+                st.info(f"💡 提示：在 YoY (%) 列輸入百分比值，系統會自動計算對應的 This Year Sales")
+
+                # 使用可編輯的資料表格
+                edited_df = st.data_editor(
+                    st.session_state.monthly_sales_data,
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        'Metric': st.column_config.TextColumn('Metric', disabled=True),
+                        **{month: st.column_config.NumberColumn(month, format="%.0f") for month in all_months}
+                    },
+                    key="monthly_sales_editor"
+                )
+
+                # 自動計算邏輯：當 YoY 被修改時，自動計算 This Year Sales
+                updated = False
+                for i, month in enumerate(all_months):
+                    yoy_val = edited_df.loc[2, month]  # YoY (%)
+                    last_year_val = edited_df.loc[0, month]  # Last Year Sales
+                    current_this_year = edited_df.loc[1, month]  # 當前的 This Year Sales
+
+                    # 如果 YoY 有值且 Last Year 有值，自動計算 This Year Sales
+                    if pd.notna(yoy_val) and pd.notna(last_year_val):
+                        calculated_this_year = last_year_val * (1 + yoy_val / 100)
+                        # 檢查是否需要更新（避免無限循環）
+                        if pd.isna(current_this_year) or abs(current_this_year - calculated_this_year) > 0.01:
+                            edited_df.loc[1, month] = calculated_this_year
+                            updated = True
+
+                # 只有在有更新時才儲存到 session state
+                if updated:
+                    st.session_state.monthly_sales_data = edited_df.copy()
+                    st.rerun()
+
+                # 計算 Sum 和 Average（過濾 None 和 NaN 值）
+                def safe_sum(values):
+                    return sum([v for v in values if pd.notna(v)])
+
+                def safe_avg(values):
+                    valid_values = [v for v in values if pd.notna(v)]
+                    return sum(valid_values) / len(valid_values) if valid_values else None
+
+                last_year_sum = safe_sum([edited_df.loc[0, month] for month in all_months])
+                this_year_sum = safe_sum([edited_df.loc[1, month] for month in all_months])
+
+                last_year_avg = safe_avg([edited_df.loc[0, month] for month in all_months])
+                this_year_avg = safe_avg([edited_df.loc[1, month] for month in all_months])
+
+                # 計算 YoY 的 Sum 和 Average
+                yoy_sum = None
+                yoy_avg = None
+
+                if last_year_sum and last_year_sum != 0:
+                    yoy_sum = ((this_year_sum - last_year_sum) / last_year_sum) * 100
+
+                if last_year_avg and last_year_avg != 0:
+                    yoy_avg = ((this_year_avg - last_year_avg) / last_year_avg) * 100
+
+                # 顯示 Sum 和 Average（創建新的 DataFrame）
+                summary_df = pd.DataFrame({
+                    'Metric': ['Last Year Sales', 'This Year Sales', 'YoY (%)'],
+                    'Sum': [f'${round(last_year_sum):,}' if last_year_sum else '-',
+                            f'${round(this_year_sum):,}' if this_year_sum else '-',
+                            f'{round(yoy_sum)}%' if yoy_sum is not None else '-'],
+                    'Average': [f'${round(last_year_avg):,}' if last_year_avg else '-',
+                                f'${round(this_year_avg):,}' if this_year_avg else '-',
+                                f'{round(yoy_avg)}%' if yoy_avg is not None else '-']
+                })
+
+                st.markdown("**Summary**")
+                st.dataframe(summary_df, use_container_width=True, hide_index=True)
+
+            else:
+                st.warning("未找到有效的月份資料")
+        else:
+            st.warning("未找到所需的欄位（This year so far, Last year, YoY）")
+
+# Business Metrics 區塊
+if "Sales Traffic Report" in loaded_data:
+    st.header("📊 Business Metrics")
+
+    sales_df = loaded_data["Sales Traffic Report"]
+
+    # 尋找 Date 欄位
+    date_columns = [col for col in sales_df.columns if 'date' in col.lower()]
+
+    if date_columns:
+        # 使用第一個找到的日期欄位
+        date_col = date_columns[0]
+
+        # 取得所有可用的日期，並排序
+        available_dates = sales_df[date_col].dropna().unique()
+
+        # 嘗試將日期轉換為 datetime 以便排序
+        try:
+            # 嘗試不同的日期格式進行轉換
+            available_dates_converted = []
+            date_mapping = {}  # 用於儲存顯示格式到原始值的對照
+
+            for date_str in available_dates:
+                try:
+                    # 自動解析日期（支援多種格式）
+                    parsed_date = pd.to_datetime(str(date_str))
+
+                    # 轉換為 YYYY-MM 格式
+                    display_format = parsed_date.strftime('%Y-%m')
+                    date_mapping[display_format] = str(date_str)
+                    available_dates_converted.append((parsed_date, display_format))
+                except:
+                    # 如果解析失敗，保持原格式
+                    available_dates_converted.append((None, str(date_str)))
+                    date_mapping[str(date_str)] = str(date_str)
+
+            # 只對成功轉換的日期進行排序
+            datetime_dates = [(d, fmt) for d, fmt in available_dates_converted if d is not None]
+            if datetime_dates:
+                datetime_dates = sorted(datetime_dates, key=lambda x: x[0], reverse=True)
+                available_dates = [fmt for _, fmt in datetime_dates]
+            else:
+                available_dates = sorted([fmt for _, fmt in available_dates_converted], reverse=True)
+
+            # 儲存對照表到 session state
+            st.session_state.date_mapping = date_mapping
+        except Exception as e:
+            # 如果轉換失敗，就直接排序字串
+            available_dates = sorted([str(d) for d in available_dates], reverse=True)
+            st.session_state.date_mapping = {d: d for d in available_dates}
+
+        # 日期選擇下拉選單
+        selected_date = st.selectbox(
+            "選擇日期",
+            options=available_dates,
+            index=0,  # 預設選擇最新的日期
+            key="business_metrics_date"
+        )
+
+        # 根據選擇的日期篩選數據
+        # 使用對照表找出原始日期值
+        original_date = st.session_state.date_mapping.get(selected_date, selected_date)
+
+        # 使用更靈活的日期匹配
+        mask = sales_df[date_col].apply(lambda x: match_date(x, original_date))
+        filtered_sales_df = sales_df[mask]
+
+        if not filtered_sales_df.empty:
+            # Sales Widget
+            st.subheader(f"📈 {selected_date} 業務指標")
+
+            # 創建 widget 欄位
+            metric_col1, metric_col2, metric_col3 = st.columns(3)
+
+            st.markdown("<div style='margin: 20px 0;'></div>", unsafe_allow_html=True)
+
+            metric_col4, metric_col5 = st.columns(2)
+
+            # 定義業務指標配置
+            business_metrics = [
+                {
+                    'column': metric_col1,
+                    'title': 'Sales',
+                    'column_keywords': ['ordered product sales'],
+                    'prefix': '$'
+                },
+                {
+                    'column': metric_col2,
+                    'title': 'Total Order Items',
+                    'column_keywords': ['total order items']
+                },
+                {
+                    'column': metric_col3,
+                    'title': 'Sessions',
+                    'column_keywords': ['sessions - total']
+                },
+                {
+                    'column': metric_col4,
+                    'title': 'CVR',
+                    'column_keywords': ['order item session percentage'],
+                    'cvr_mode': True,
+                    'suffix': '%',
+                    'show_change_percent': False
+                },
+                {
+                    'column': metric_col5,
+                    'title': 'ASP',
+                    'column_keywords': ['average selling price'],
+                    'prefix': '$',
+                    'decimal_mode': True  # 保留兩位小數
+                }
+            ]
+
+            # 批量渲染業務指標
+            for metric in business_metrics:
+                with metric['column']:
+                    render_business_metric_widget(sales_df, date_col, original_date, metric)
+
+        # 在 L819 之後添加圖表區塊
+        st.markdown("---")
+        st.subheader("📈 Business Metrics Trends")
+
+        # 獲取所有數值欄位（排除日期欄位）
+        numeric_columns = []
+        for col in sales_df.columns:
+            if col != date_col:
+                # 嘗試將欄位轉換為數值，忽略錯誤
+                numeric_series = pd.to_numeric(sales_df[col], errors='coerce')
+                # 如果轉換後至少有一個非空值，則認為是數值欄位
+                if not numeric_series.isnull().all():
+                    numeric_columns.append(col)
+
+        # 預設選擇的欄位
+        default_metrics = [
+            'Ordered Product Sales',
+            'Total Order Items',
+            'Sessions - Total',
+            'Order Item Session Percentage',
+            'Average Selling Price'
+        ]
+
+        # 找出實際存在的預設欄位
+        actual_default_metrics = []
+        for default_metric in default_metrics:
+            # 尋找包含關鍵詞的欄位
+            matching_cols = [col for col in numeric_columns if default_metric.lower() in col.lower()]
+            if matching_cols:
+                # 優先選擇不包含特定後綴的基本欄位
+                basic_cols = [col for col in matching_cols if not any(
+                    suffix in col.lower() for suffix in ['this year so far', '% change', 'last year'])]
+                if basic_cols:
+                    actual_default_metrics.append(basic_cols[0])
+                else:
+                    actual_default_metrics.append(matching_cols[0])
+
+        # 去重
+        actual_default_metrics = list(dict.fromkeys(actual_default_metrics))
+
+        # 如果沒有找到預設欄位，則選擇前5個數值欄位
+        if not actual_default_metrics and numeric_columns:
+            actual_default_metrics = numeric_columns[:5]
+
+        # 多選框讓用戶選擇要顯示的指標
+        selected_metrics = st.multiselect(
+            "選擇要顯示的業務指標 (每個指標一張圖)",
+            options=numeric_columns,
+            default=actual_default_metrics,
+            key="business_metrics_chart_selection"
+        )
+
+        if selected_metrics and len(available_dates) > 1:
+            import plotly.graph_objects as go
+
+            def create_comparison_chart(metric, sales_df, date_col):
+                # Get all dates from the dataframe and parse them
+                try:
+                    sales_df_copy = sales_df.copy()
+                    sales_df_copy['parsed_date'] = pd.to_datetime(sales_df_copy[date_col], errors='coerce')
+                    all_dates_in_df = sales_df_copy['parsed_date'].dropna()
+
+                    if all_dates_in_df.empty:
+                        st.warning(f"No valid dates found for metric '{metric}'.")
+                        return None
+                    latest_year = all_dates_in_df.max().year
+                    last_year = latest_year - 1
+                except Exception as e:
+                    st.error(f"Could not determine years from date column: {e}")
+                    return None
+
+                months_map = {1: 'Jan', 2: 'Feb', 3: 'Mar', 4: 'Apr', 5: 'May', 6: 'Jun', 7: 'Jul', 8: 'Aug', 9: 'Sep', 10: 'Oct', 11: 'Nov', 12: 'Dec'}
+                month_order = list(months_map.values())
+
+                plot_data = []
+                for month_num, month_name in months_map.items():
+                    this_year_mask = (sales_df_copy['parsed_date'].dt.year == latest_year) & (sales_df_copy['parsed_date'].dt.month == month_num)
+                    this_year_series = sales_df_copy.loc[this_year_mask, metric]
+                    this_year_value = this_year_series.iloc[0] if not this_year_series.empty else None
+
+                    last_year_mask = (sales_df_copy['parsed_date'].dt.year == last_year) & (sales_df_copy['parsed_date'].dt.month == month_num)
+                    last_year_series = sales_df_copy.loc[last_year_mask, metric]
+                    last_year_value = last_year_series.iloc[0] if not last_year_series.empty else None
+
+                    if this_year_value is not None or last_year_value is not None:
+                         plot_data.append({'Month': month_name, f'{latest_year}': this_year_value, f'{last_year}': last_year_value})
+
+                if not plot_data:
+                    st.info(f"Not enough data to generate a Year-over-Year comparison chart for '{metric}'.")
+                    return None
+
+                plot_df = pd.DataFrame(plot_data).set_index('Month').reindex(month_order).reset_index()
+
+                fig = go.Figure()
+                fig.add_trace(go.Scatter(x=plot_df['Month'], y=plot_df[f'{latest_year}'], name=f'{latest_year}', mode='lines+markers'))
+                fig.add_trace(go.Scatter(x=plot_df['Month'], y=plot_df[f'{last_year}'], name=f'{last_year}', mode='lines+markers'))
+
+                fig.update_layout(
+                    title=f"{metric} (YoY Comparison)",
+                    xaxis_title="Month",
+                    yaxis_title="Value",
+                    height=350,
+                    legend_title_text='Year',
+                    margin=dict(l=40, r=40, t=40, b=40)
+                )
+                return fig
+
+            # 為每個選擇的指標生成一個圖表，每行兩個
+            num_metrics = len(selected_metrics)
+            for i in range(0, num_metrics, 2):
+                col1, col2 = st.columns(2)
+
+                with col1:
+                    metric1 = selected_metrics[i]
+                    fig1 = create_comparison_chart(metric1, sales_df, date_col)
+                    if fig1:
+                        st.plotly_chart(fig1, use_container_width=True)
+
+                if i + 1 < num_metrics:
+                    with col2:
+                        metric2 = selected_metrics[i+1]
+                        fig2 = create_comparison_chart(metric2, sales_df, date_col)
+                        if fig2:
+                            st.plotly_chart(fig2, use_container_width=True)
+
+        elif selected_metrics and len(available_dates) <= 1:
+            st.info("需要至少2個日期的數據才能顯示趨勢圖表")
+
+        elif not selected_metrics:
+            st.info("請選擇至少一個業務指標來顯示圖表")
+
+        else:
+            st.warning(f"未找到日期 {selected_date} 的數據")
+    else:
+        st.warning("未找到 Date 欄位")
+        if st.checkbox("顯示所有欄位 (調試)", key="debug_all_columns"):
+            st.write("**Sales Traffic Report 所有欄位:**")
+            st.write(list(sales_df.columns))
+
+# Advertising & Merchandising 區塊
+if "P0 MCID MBR" in loaded_data:
+    st.markdown("---")
+    st.header("📢 Advertising & Merchandising")
+
+    ads_df = loaded_data["P0 MCID MBR"]
+
+    # CID 下拉選單（必選）
+    if 'merchant_customer_id' in ads_df.columns:
+        # 取得所有唯一的 merchant_customer_id，並清洗格式
+        available_cids = ads_df['merchant_customer_id'].dropna().unique()
+
+        # 清洗 CID 格式（去除 .0）
+        cleaned_cids = []
+        for cid in available_cids:
+            try:
+                # 如果是數值，轉換為整數字串
+                if pd.notna(cid):
+                    cleaned_cid = str(int(float(cid)))
+                    cleaned_cids.append(cleaned_cid)
+            except:
+                # 如果轉換失敗，使用原始字串
+                cleaned_cids.append(str(cid))
+
+        # 排序並去重
+        cleaned_cids = sorted(list(set(cleaned_cids)))
+
+        # 顯示下拉選單
+        cid_input = st.selectbox(
+            "選擇 CID (merchant_customer_id):",
+            options=["請選擇..."] + cleaned_cids,
+            key="ads_cid_selector"
+        )
+
+        # 如果沒有選擇 CID，顯示提示並停止後續處理
+        if cid_input == "請選擇...":
+            st.warning("⚠️ 請先選擇一個 CID (merchant_customer_id) 才能查看數據")
+            st.stop()
+    else:
+        st.warning("未找到 merchant_customer_id 欄位")
+        st.stop()
+
+    # 根據 CID 篩選數據
+    if 'merchant_customer_id' in ads_df.columns:
+        # 更靈活的CID匹配邏輯
+        def match_cid(df_cid, input_cid):
+            if pd.isna(df_cid):
+                return False
+            try:
+                # 多種格式轉換和匹配
+                df_str = str(df_cid).strip().replace('.0', '')
+                input_str = str(input_cid).strip()
+
+                # 字串匹配
+                if df_str == input_str or df_str.lower() == input_str.lower():
+                    return True
+
+                # 數值匹配
+                try:
+                    df_num = float(df_cid)
+                    input_num = float(input_cid)
+                    if df_num == input_num:
+                        return True
+                except:
+                    pass
+
+                # 整數匹配
+                try:
+                    df_int = int(float(df_cid))
+                    input_int = int(float(input_cid))
+                    if df_int == input_int:
+                        return True
+                except:
+                    pass
+
+                return False
+            except:
+                return False
+
+        cid_filtered_df = ads_df[ads_df['merchant_customer_id'].apply(lambda x: match_cid(x, cid_input))].copy()
+
+        if cid_filtered_df.empty:
+            # 顯示可用的 CID 列表供參考
+            available_cids = ads_df['merchant_customer_id'].dropna().unique()[:10]
+            st.error(f"❌ 找不到 CID '{cid_input}' 的數據")
+            st.info(f"💡 可用的 CID 範例: {list(available_cids)}")
+            st.stop()
+    else:
+        st.warning("未找到 merchant_customer_id 欄位")
+        st.stop()
+
+    # Marketplace ID 篩選器（必選）
+    marketplace_filter = None
+    if 'marketplace_id' in cid_filtered_df.columns:
+        available_marketplaces = sorted(cid_filtered_df['marketplace_id'].dropna().unique())
+        if available_marketplaces:
+            marketplace_filter = st.selectbox(
+                "選擇 Marketplace (必選)",
+                options=["請選擇..."] + list(available_marketplaces),
+                index=0,
+                key="ads_marketplace_selector"
+            )
+
+            # 如果沒有選擇 marketplace，顯示提示並停止後續處理
+            if marketplace_filter == "請選擇...":
+                st.warning("⚠️ 請先選擇一個 Marketplace 才能查看數據")
+                st.stop()
+        else:
+            st.warning("未找到任何 Marketplace ID")
+            st.stop()
+    else:
+        st.warning("未找到 marketplace_id 欄位")
+        st.stop()
+
+    # 年月選擇器 - 使用 YYYY-MM 格式
+    if 'calendar_year' in cid_filtered_df.columns and 'calendar_month' in cid_filtered_df.columns:
+        # 創建年月組合列表
+        ads_df_temp = cid_filtered_df.dropna(subset=['calendar_year', 'calendar_month'])
+        if not ads_df_temp.empty:
+            # 創建 YYYY-MM 格式的選項
+            year_month_combinations = ads_df_temp.apply(
+                lambda row: f"{int(row['calendar_year'])}-{int(row['calendar_month']):02d}",
+                axis=1
+            ).unique()
+            available_year_months = sorted(year_month_combinations, reverse=True)
+
+            selected_year_month = st.selectbox(
+                "選擇年月",
+                options=available_year_months,
+                index=0,
+                key="ads_year_month_selector"
+            )
+
+            # 解析選擇的年月
+            selected_year = int(selected_year_month.split('-')[0])
+            selected_month = int(selected_year_month.split('-')[1])
+        else:
+            st.warning("未找到有效的年月資料")
+            selected_year = 2025
+            selected_month = 1
+    else:
+        st.warning("未找到 calendar_year 或 calendar_month 欄位")
+        selected_year = 2025
+        selected_month = 1
+
+    # 篩選數據 - 先根據 CID 和 marketplace_id 篩選
+    filtered_ads_df = cid_filtered_df[cid_filtered_df['marketplace_id'] == marketplace_filter].copy()
+
+    # 再根據年月篩選
+    if 'calendar_year' in cid_filtered_df.columns:
+        filtered_ads_df = filtered_ads_df[filtered_ads_df['calendar_year'] == selected_year]
+    if 'calendar_month' in cid_filtered_df.columns:
+        filtered_ads_df = filtered_ads_df[filtered_ads_df['calendar_month'] == selected_month]
+
+    # 第一排 KPI
+    with st.container():
+        widget_row1_col1, widget_row1_col2, widget_row1_col3 = st.columns(3)
+
+    # Widget 1: TACOS
+    with widget_row1_col1:
+        # 計算當前 TACOS
+        tacos_value = 0
+        tacos_yoy = None
+        tacos_mom = None
+
+        if 'mtd_sa_revenue_usd' in cid_filtered_df.columns and 'mtd_ord_gms' in cid_filtered_df.columns:
+            # 當前月份
+            current_mask = (cid_filtered_df['calendar_year'] == selected_year) & (cid_filtered_df['calendar_month'] == selected_month)
+            current_ads = cid_filtered_df[current_mask]['mtd_sa_revenue_usd'].dropna().sum()
+            current_gms = cid_filtered_df[current_mask]['mtd_ord_gms'].dropna().sum()
+
+            if current_gms > 0:
+                tacos_value = (current_ads / current_gms) * 100
+
+                # 計算去年同月 (YoY)
+                last_year = selected_year - 1
+                last_year_mask = (cid_filtered_df['calendar_year'] == last_year) & (cid_filtered_df['calendar_month'] == selected_month)
+                last_year_ads = cid_filtered_df[last_year_mask]['mtd_sa_revenue_usd'].dropna().sum()
+                last_year_gms = cid_filtered_df[last_year_mask]['mtd_ord_gms'].dropna().sum()
+
+                if last_year_gms > 0:
+                    last_year_tacos = (last_year_ads / last_year_gms) * 100
+                    if last_year_tacos != 0:
+                        tacos_yoy = ((tacos_value - last_year_tacos) / last_year_tacos) * 100
+
+                # 計算上個月 (MoM)
+                if selected_month == 1:
+                    last_month = 12
+                    last_month_year = selected_year - 1
+                else:
+                    last_month = selected_month - 1
+                    last_month_year = selected_year
+
+                last_month_mask = (cid_filtered_df['calendar_year'] == last_month_year) & (cid_filtered_df['calendar_month'] == last_month)
+                last_month_ads = cid_filtered_df[last_month_mask]['mtd_sa_revenue_usd'].dropna().sum()
+                last_month_gms = cid_filtered_df[last_month_mask]['mtd_ord_gms'].dropna().sum()
+
+                if last_month_gms > 0:
+                    last_month_tacos = (last_month_ads / last_month_gms) * 100
+                    if last_month_tacos != 0:
+                        tacos_mom = ((tacos_value - last_month_tacos) / last_month_tacos) * 100
+
+        render_kpi_widget("TACOS", round(tacos_value, 2) if tacos_value > 0 else 0, tacos_yoy, tacos_mom, suffix="%")
+
+    # Widget 2: Ads spending
+    with widget_row1_col2:
+        ads_spending_value, ads_spending_yoy, ads_spending_mom = calculate_yoy_mom_from_df(
+            cid_filtered_df, 'mtd_sa_revenue_usd', selected_year, selected_month
+        )
+        render_kpi_widget("Ads spending", round(ads_spending_value) if isinstance(ads_spending_value, (int, float)) else ads_spending_value, ads_spending_yoy, ads_spending_mom, prefix="$")
+
+    # Widget 3: SP ops
+    with widget_row1_col3:
+        sp_ops_value, sp_ops_yoy, sp_ops_mom = calculate_yoy_mom_from_df(
+            cid_filtered_df, 'mtd_sa_attributed_ops_usd', selected_year, selected_month
+        )
+        render_kpi_widget("SP ops", round(sp_ops_value) if isinstance(sp_ops_value, (int, float)) else sp_ops_value, sp_ops_yoy, sp_ops_mom, prefix="$")
+
+    # 折線圖區塊
+    with st.container():
+        st.markdown("<div style='margin-top: 30px; margin-bottom: 30px;'></div>", unsafe_allow_html=True)
+
+        if 'mtd_ord_gms' in cid_filtered_df.columns and 'mtd_sa_revenue_usd' in cid_filtered_df.columns:
+            import plotly.graph_objects as go
+
+            # 準備數據：按年月分組並加總
+            if 'calendar_year' in cid_filtered_df.columns and 'calendar_month' in cid_filtered_df.columns:
+                # 創建年月欄位用於排序和顯示
+                ads_df_chart = cid_filtered_df.copy()
+                ads_df_chart['year_month'] = ads_df_chart.apply(
+                    lambda row: f"{int(row['calendar_year'])}-{int(row['calendar_month']):02d}"
+                    if pd.notna(row['calendar_year']) and pd.notna(row['calendar_month']) else None,
+                    axis=1
+                )
+
+                # 移除沒有年月的資料
+                ads_df_chart = ads_df_chart.dropna(subset=['year_month'])
+
+                # 按年月分組並加總
+                grouped_data = ads_df_chart.groupby('year_month').agg({
+                    'mtd_ord_gms': 'sum',
+                    'mtd_sa_revenue_usd': 'sum'
+                }).reset_index()
+
+                # 排序
+                grouped_data = grouped_data.sort_values('year_month')
+
+                if not grouped_data.empty:
+                    # 創建圖表
+                    fig = go.Figure()
+
+                    # Revenue 線 (藍色)
+                    fig.add_trace(go.Scatter(
+                        x=grouped_data['year_month'],
+                        y=grouped_data['mtd_ord_gms'],
+                        name='Revenue',
+                        mode='lines+markers',
+                        line=dict(color='#1f77b4', width=2),
+                        marker=dict(size=6)
+                    ))
+
+                    # Ads Spending 線 (橘色)
+                    fig.add_trace(go.Scatter(
+                        x=grouped_data['year_month'],
+                        y=grouped_data['mtd_sa_revenue_usd'],
+                        name='Ads Spending',
+                        mode='lines+markers',
+                        line=dict(color='#ff7f0e', width=2),
+                        marker=dict(size=6)
+                    ))
+
+                    # 設置布局
+                    fig.update_layout(
+                        xaxis_title="Year-Month",
+                        yaxis_title="Amount ($)",
+                        hovermode='x unified',
+                        legend=dict(
+                            orientation="h",
+                            yanchor="bottom",
+                            y=1.02,
+                            xanchor="right",
+                            x=1
+                        ),
+                        height=350,
+                        yaxis=dict(separatethousands=True)
+                    )
+
+                    st.plotly_chart(fig, use_container_width=True)
+
+    # 第二排 KPI
+    with st.container():
+        widget_row2_col1, widget_row2_col2, widget_row2_col3 = st.columns(3)
+
+    # 定義 Promotion/Deal/Coupon 指標配置
+    merchandising_metrics = [
+        {
+            'column': widget_row2_col1,
+            'title': 'Promotion',
+            'column_name': 'mtd_promotion_count'
+        },
+        {
+            'column': widget_row2_col2,
+            'title': 'Deal',
+            'column_name': 'mtd_deal_count'
+        },
+        {
+            'column': widget_row2_col3,
+            'title': 'Coupon',
+            'column_name': 'mtd_coupon_count'
+        }
+    ]
+
+    # 批量渲染第二排指標
+    for metric in merchandising_metrics:
+        with metric['column']:
+            value, yoy, mom = calculate_yoy_mom_from_df(
+                cid_filtered_df, metric['column_name'], selected_year, selected_month
+            )
+            render_kpi_widget(metric['title'], round(value) if isinstance(value, (int, float)) else value, yoy, mom)
+
+    # 第三排 KPI
+    with st.container():
+        st.markdown("<div style='margin-top: 20px;'></div>", unsafe_allow_html=True)
+        widget_row3_col1, widget_row3_col2, widget_row3_col3 = st.columns(3)
+
+    # 計算總金額用於占比計算
+    def get_total_gms(df, year, month):
+        if 'mtd_ord_gms' in df.columns:
+            mask = (df['calendar_year'] == year) & (df['calendar_month'] == month)
+            data = df[mask]['mtd_ord_gms'].dropna()
+            return data.sum() if not data.empty else 0
+        return 0
+
+    total_gms = get_total_gms(cid_filtered_df, selected_year, selected_month)
+
+    # 定義 OPS 指標配置（帶百分比）
+    ops_metrics = [
+        {
+            'column': widget_row3_col1,
+            'title': 'Promotion OPS',
+            'column_name': 'mtd_promotion_ops'
+        },
+        {
+            'column': widget_row3_col2,
+            'title': 'Deal OPS',
+            'column_name': 'mtd_deal_ops'
+        },
+        {
+            'column': widget_row3_col3,
+            'title': 'Coupon OPS',
+            'column_name': 'mtd_coupon_ops'
+        }
+    ]
+
+    # 批量渲染第三排指標（帶百分比）
+    for metric in ops_metrics:
+        with metric['column']:
+            value, yoy, mom = calculate_yoy_mom_from_df(
+                cid_filtered_df, metric['column_name'], selected_year, selected_month
+            )
+            percentage = (value / total_gms * 100) if total_gms > 0 else 0
+            render_kpi_widget_with_percentage(metric['title'], value, percentage, yoy, mom)
+
+# ASIN Level 區塊
+if "Asin Report" in loaded_data:
+    st.markdown("---")
+    st.header("📦 ASIN Level")
+
+    asin_df = loaded_data["Asin Report"]
+
+    # 兩個widget
+    col1, col2 = st.columns(2)
+
+    st.markdown("<div style='margin: 20px 0;'></div>", unsafe_allow_html=True)
+
+    with col1:
+        session_median = 0
+        session_mean = 0
+        if 'Sessions - Total' in asin_df.columns:
+            # 排除0的資料
+            session_data = asin_df['Sessions - Total'].dropna()
+            session_data = session_data[session_data != 0]
+            if not session_data.empty:
+                session_median = round(session_data.median())
+                session_mean = round(session_data.mean())
+        if 'Sessions - Total - Prior Period' in asin_df.columns:
+            prior_session_data = asin_df['Sessions - Total - Prior Period'].dropna()
+            prior_session_data = prior_session_data[prior_session_data != 0]
+            if not prior_session_data.empty:
+                prior_session_median = round(prior_session_data.median())
+                prior_session_mean = round(prior_session_data.mean())
+                session_median_mom = (session_median - prior_session_median) / prior_session_median
+                session_mean_mom = (session_mean - prior_session_mean) / prior_session_mean
+
+        if 'Sessions - Total - Last Year' in asin_df.columns:
+            last_year_session_data = asin_df['Sessions - Total - Last Year'].dropna()
+            last_year_session_data = last_year_session_data[last_year_session_data != 0]
+            if not last_year_session_data.empty:
+                last_session_median = round(last_year_session_data.median())
+                last_session_mean = round(last_year_session_data.mean())
+                session_median_yoy = (session_median - last_session_median) / last_session_median
+                session_mean_yoy = (session_mean - last_session_mean) / last_session_mean
+
+        render_kpi_widget("Session (中位數)", session_median, session_median_yoy, session_median_mom)
+
+    with col2:
+        cvr_median = 0
+        cvr_mean = 0
+        if 'Unit Session Percentage' in asin_df.columns:
+            # 排除0的資料，並移除 % 符號進行計算
+            cvr_data = asin_df['Unit Session Percentage'].dropna()
+            # 移除 % 符號並轉換為數值
+            cvr_data = cvr_data.apply(
+                lambda x: float(str(x).replace('%', '').strip()) if pd.notna(x) else 0
+            )
+            cvr_data = cvr_data[cvr_data != 0]
+            if not cvr_data.empty:
+                cvr_median = round(cvr_data.median(), 2)
+                cvr_mean = round(cvr_data.mean(), 2)
+        if 'Unit Session % - Prior Period' in asin_df.columns:
+            prior_cvr_data = asin_df['Unit Session % - Prior Period'].dropna()
+            prior_cvr_data = prior_cvr_data.apply(
+                lambda x: float(str(x).replace('%', '').strip()) if pd.notna(x) else 0
+            )
+            prior_cvr_data = prior_cvr_data[prior_cvr_data != 0]
+            if not prior_cvr_data.empty:
+                prior_cvr_median = round(prior_cvr_data.median(), 2)
+                prior_cvr_mean = round(prior_cvr_data.mean(), 2)
+                cvr_median_mom = (cvr_median - prior_cvr_median) * 10000
+                cvr_mean_mom = (cvr_mean - prior_cvr_mean) * 10000
+        if 'Unit Session % - Last Year' in asin_df.columns:
+            last_cvr_data = asin_df['Unit Session % - Last Year'].dropna()
+            last_cvr_data = last_cvr_data.apply(
+                lambda x: float(str(x).replace('%', '').strip()) if pd.notna(x) else 0
+            )
+            last_cvr_data = last_cvr_data[last_cvr_data != 0]
+            if not last_cvr_data.empty:
+                last_cvr_median = round(last_cvr_data.median(), 2)
+                last_cvr_mean = round(last_cvr_data.mean(), 2)
+                cvr_median_yoy = (cvr_median - last_cvr_median) * 10000
+                cvr_mean_yoy = (cvr_mean - last_cvr_mean) * 10000
+
+        render_kpi_widget("CVR (中位數)", cvr_median, cvr_median_yoy, cvr_median_mom, suffix="%", show_change_percent=False)
+
+    # 顯示平均數
+    col3, col4 = st.columns(2)
+
+    with col3:
+        render_kpi_widget("Session (平均數)", session_mean, session_mean_yoy, session_mean_mom)
+
+    with col4:
+        render_kpi_widget("CVR (平均數)", cvr_mean, cvr_mean_yoy, cvr_mean_mom, suffix="%", show_change_percent=False)
+
+    # ASIN Sales 圓餅圖
+    st.markdown("---")
+    st.subheader("📊 ASIN Sales Contribution")
+
+    if 'Sales Contribution %' in asin_df.columns and 'Child ASIN' in asin_df.columns:
+        import plotly.graph_objects as go
+
+        # 準備數據
+        pie_data = asin_df[['Child ASIN', 'Sales Contribution %']].dropna().copy()
+
+        # 將 Sales Contribution % 轉換為數值（去除 % 符號）
+        pie_data['Sales Contribution %'] = pie_data['Sales Contribution %'].apply(
+            lambda x: float(str(x).replace('%', '').strip()) if pd.notna(x) else 0
+        )
+
+        if not pie_data.empty:
+            # 只取前10名，其餘合併為「其他」
+            top_10 = pie_data.nlargest(10, 'Sales Contribution %')
+
+            # 如果超過10筆，將剩餘的合併為「其他」
+            if len(pie_data) > 10:
+                    others_sum = pie_data.iloc[10:]['Sales Contribution %'].sum()
+                    # 創建「其他」的資料
+                    others_row = pd.DataFrame({
+                        'Child ASIN': ['其他'],
+                        'Sales Contribution %': [others_sum]
+                    })
+                    # 合併前10名和「其他」
+                    chart_data = pd.concat([top_10, others_row], ignore_index=True)
+            else:
+                chart_data = top_10
+
+            # 創建圓餅圖
+            fig = go.Figure(data=[go.Pie(
+                labels=chart_data['Child ASIN'],
+                values=chart_data['Sales Contribution %'],
+                hole=0.3,  # 甜甜圈圖效果
+                textposition='auto',
+                textinfo='label+percent',
+                hovertemplate='<b>%{label}</b><br>貢獻度: %{value}%<br>佔比: %{percent}<extra></extra>'
+            )])
+
+            fig.update_layout(
+                title="各 ASIN 銷售貢獻百分比",
+                height=500,
+                showlegend=True,
+                legend=dict(
+                    orientation="v",
+                    yanchor="middle",
+                    y=0.5,
+                    xanchor="left",
+                    x=1.05
+                )
+            )
+
+            st.plotly_chart(fig, use_container_width=True)
+
+            # 顯示主力 ASIN (貢獻度最高的前3名)
+            top_asins = pie_data.nlargest(3, 'Sales Contribution %')
+            st.markdown("**主力 ASIN TOP 3:**")
+            for idx, row in top_asins.iterrows():
+                st.write(f"🏆 **{row['Child ASIN']}**: {row['Sales Contribution %']:.2f}%")
+
+            # 顯示完整的資料表格
+            st.markdown("---")
+            st.markdown("**完整 ASIN 資料:**")
+
+            # 顯示所有欄位的完整資料
+            display_df = asin_df.copy()
+
+            # 重新命名欄位標題
+            column_rename_map = {
+                'Ordered Product Sales': 'Sales',
+                'Ordered Product Sales - Prior Period': 'Sales-lm',
+                'Ordered Product Sales - Last Year': 'Sales-ly',
+                'Sessions - Total': 'Sessions',
+                'Sessions - Total - Prior Period': 'Sessions-lm',
+                'Sessions - Total - Last Year': 'Sessions-ly',
+                'Total Order Items':'Orders',
+                'Total Order Items - Prior Period': 'Orders-lm',
+                'Total Order Items - Last Year': 'Orders-ly',
+                'Unit Session Percentage': 'CVR',
+                'Unit Session % - Prior Period': 'CVR-lm',
+                'Unit Session % - Last Year': 'CVR-ly',
+                'Sales Contribution %':'Sales %',
+                'Total Days of Supply':'TDoS'
+                # 'Original Column Name': 'New Display Name',
+            }
+            display_df = display_df.rename(columns=column_rename_map)
+
+            # 如果有 Sales Contribution % 欄位，按照貢獻度排序
+            contribution_col = 'Sales Contribution %'
+            if contribution_col in display_df.columns:
+                # 創建一個用於排序的數值欄位
+                display_df['_sort_value'] = display_df['Sales Contribution %'].apply(
+                    lambda x: float(str(x).replace('%', '').strip()) if pd.notna(x) else 0
+                )
+                # 排序（由高到低）
+                display_df = display_df.sort_values('_sort_value', ascending=False)
+                # 移除排序用的欄位
+                display_df = display_df.drop(columns=['_sort_value'])
+
+            # 重設索引，從1開始編號
+            display_df = display_df.reset_index(drop=True)
+            display_df.index = display_df.index + 1
+
+            # 定義樣式函數：將 MoM 和 YoY 的正值顯示為綠色，負值顯示為紅色
+            def color_mom_yoy(val):
+                """根據正負值返回顏色"""
+                try:
+                    # 嘗試將值轉換為數字（移除可能的 % 符號和 bps 文字）
+                    num_val = float(str(val).replace('%', '').replace('bps', '').strip())
+                    if num_val > 0:
+                        return 'color: green'
+                    elif num_val < 0:
+                        return 'color: red'
+                    else:
+                        return 'color: black'
+                except:
+                    return ''
+
+
+
+            # 格式化數值欄位
+            def format_values(df):
+                formatted_df = df.copy()
+                for col in formatted_df.columns:
+                    if any(keyword in col.lower() for keyword in ['sales', 'revenue']):
+                        # Sales 相關欄位加上$符號和千位逗號
+                        formatted_df[col] = formatted_df[col].apply(
+                            lambda x: f"${x:,.2f}" if isinstance(x, (int, float)) and pd.notna(x) else x
+                        )
+                    elif any(keyword in col.lower() for keyword in ['available', 'total days of supply', 'totaldays', 'woc', 'tdos']):
+                        # Available, total days of supply, totaldays, woc, tdos 欄位顯示為整數
+                        formatted_df[col] = formatted_df[col].apply(
+                            lambda x: f"{round(x):,}" if isinstance(x, (int, float)) and pd.notna(x) else x
+                        )
+                return formatted_df
+
+            formatted_display_df = format_values(display_df)
+
+            # 找出 MoM 和 YoY 相關的欄位
+            mom_yoy_cols = [col for col in formatted_display_df.columns if 'mom' in col.lower() or 'yoy' in col.lower()]
+
+            # 從分組中提取各類型欄位
+            sales_percentage_cols = [col for col in display_df.columns if col.lower() == 'sales %']
+            sales_cols = [col for col in display_df.columns if col.lower() in ['sales', 'sales-lm', 'sales-ly']]
+            sessions_cols = [col for col in display_df.columns if col.lower() in ['sessions', 'sessions-lm', 'sessions-ly']]
+            orders_cols = [field for field in display_df.columns if field.lower() in ['orders', 'orders-lm', 'orders-ly']]
+            cvr_cols = [field for field in display_df.columns if field.lower() in ['cvr', 'cvr-lm', 'cvr-ly']]
+
+            # 預先計算每組欄位的最小最大值
+            def calculate_group_min_max(df, cols):
+                """計算一組欄位的全局最小最大值"""
+                all_values = []
+                for col in cols:
+                    if col in df.columns:
+                        for val in df[col]:
+                            try:
+                                if isinstance(val, str):
+                                    numeric_val = float(val.replace('$', '').replace(',', '').replace('%', '').strip())
+                                else:
+                                    numeric_val = float(val) if pd.notna(val) else 0
+                                if numeric_val > 0:
+                                    all_values.append(numeric_val)
+                            except:
+                                pass
+
+                if all_values:
+                    return min(all_values), max(all_values)
+                return None, None
+
+            # 計算各組的最小最大值
+            sales_percentage_min, sales_percentage_max = calculate_group_min_max(formatted_display_df, sales_percentage_cols)
+            sales_min, sales_max = calculate_group_min_max(formatted_display_df, sales_cols)
+            sessions_min, sessions_max = calculate_group_min_max(formatted_display_df, sessions_cols)
+            orders_min, orders_max = calculate_group_min_max(formatted_display_df, orders_cols)
+            cvr_min, cvr_max = calculate_group_min_max(formatted_display_df, cvr_cols)
+
+            # 定義通用熱力圖背景色函數
+            def apply_heatmap(col, target_cols, light_rgb, dark_rgb, group_min, group_max):
+                """為指定欄位添加熱力圖背景，並根據背景明度調整字體顏色
+
+                Args:
+                    col: 欄位資料
+                    target_cols: 目標欄位列表
+                    light_rgb: 淺色 RGB 元組 (r, g, b)
+                    dark_rgb: 深色 RGB 元組 (r, g, b)
+                    group_min: 該組欄位的全局最小值
+                    group_max: 該組欄位的全局最大值
+                """
+                if col.name not in target_cols:
+                    return [''] * len(col)
+
+                # 檢查是否有有效的最小最大值
+                if group_min is None or group_max is None:
+                    return [''] * len(col)
+
+                # 提取數值（移除格式化的 $、逗號和 % 符號）
+                numeric_values = []
+                for val in col:
+                    try:
+                        if isinstance(val, str):
+                            # 移除 $、逗號、% 符號和空格
+                            numeric_val = float(val.replace('$', '').replace(',', '').replace('%', '').strip())
+                        else:
+                            numeric_val = float(val) if pd.notna(val) else 0
+                        numeric_values.append(numeric_val)
+                    except:
+                        numeric_values.append(0)
+
+                # 為每個值生成背景色和字體顏色
+                styles = []
+                for val in numeric_values:
+                    if val <= 0:
+                        styles.append('')
+                    else:
+                        # 正規化到 0-1 之間（使用整組的最小最大值）
+                        if group_max > group_min:
+                            normalized = (val - group_min) / (group_max - group_min)
+                        else:
+                            normalized = 0.5
+
+                        # 使用線性插值計算顏色
+                        r = int(light_rgb[0] - (light_rgb[0] - dark_rgb[0]) * normalized)
+                        g = int(light_rgb[1] - (light_rgb[1] - dark_rgb[1]) * normalized)
+                        b = int(light_rgb[2] - (light_rgb[2] - dark_rgb[2]) * normalized)
+
+                        # 計算明度 (luminance) 來決定字體顏色
+                        # 使用公式: luminance = 0.299*R + 0.587*G + 0.114*B
+                        luminance = 0.299 * r + 0.587 * g + 0.114 * b
+
+                        # 如果背景較亮（luminance > 128），使用深色字體；否則使用淺色字體
+                        text_color = 'black' if luminance > 128 else 'white'
+
+                        bg_color = f'rgb({r}, {g}, {b})'
+                        styles.append(f'background-color: {bg_color}; color: {text_color}')
+
+                return styles
+
+            # 應用樣式
+            styled_df = formatted_display_df.style
+
+            # 應用 MoM/YoY 文字顏色
+            if mom_yoy_cols:
+                styled_df = styled_df.apply(lambda x: [color_mom_yoy(v) if x.name in mom_yoy_cols else '' for v in x], axis=0)
+
+            if sales_percentage_cols:
+                styled_df = styled_df.apply(lambda x: apply_heatmap(x, sales_percentage_cols, (227, 242, 253), (25, 118, 210), sales_percentage_min, sales_percentage_max), axis=0)
+
+            # 應用 Sales 熱力圖背景色（藍色系：淺藍 #E3F2FD 到深藍 #1976D2）
+            if sales_cols:
+                styled_df = styled_df.apply(lambda x: apply_heatmap(x, sales_cols, (227, 242, 253), (25, 118, 210), sales_min, sales_max), axis=0)
+
+            # 應用 Sessions 熱力圖背景色（綠色系：淺綠 #E1F5E0 到深綠 #2E7D32）
+            if sessions_cols:
+                styled_df = styled_df.apply(lambda x: apply_heatmap(x, sessions_cols, (225, 245, 224), (46, 125, 50), sessions_min, sessions_max), axis=0)
+
+            # 應用 Orders 熱力圖背景色（紫色系：很淡紫 #F3E5F5 到中紫 #9C27B0）
+            if orders_cols:
+                styled_df = styled_df.apply(lambda x: apply_heatmap(x, orders_cols, (246, 235, 255), (186, 102, 255), orders_min, orders_max), axis=0)
+
+            # 應用 CVR 熱力圖背景色（橘黃色系：淺橘黃 #FFF3E0 到深橘 #F57C00）
+            if cvr_cols:
+                styled_df = styled_df.apply(lambda x: apply_heatmap(x, cvr_cols, (255, 243, 224), (245, 124, 0), cvr_min, cvr_max), axis=0)
+
+
+            def highlight_woc(val):
+                """針對 WOC 欄位條件上色"""
+                if float(val) <= 4:
+                    return "background-color: pink; color: red;"
+                elif float(val) > 8:
+                    return "color: red;"
+                else:
+                    return ""
+
+            styled_df = styled_df.applymap(highlight_woc, subset=["WOC"])
+
+            st.dataframe(styled_df, use_container_width=True)
+        else:
+            st.warning("無可用的 Sales Contribution % 資料")
+    else:
+        st.warning("未找到 Sales Contribution % 欄位")
