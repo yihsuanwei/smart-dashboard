@@ -38,10 +38,32 @@ def render_kpi_widget(title, value, yoy_pct=None, mom_pct=None, prefix="", suffi
         formatted_value = str(value)
 
     st.markdown(f"""
-    <div style="
-        border:1px solid #e0e0e0; border-radius:10px; padding:15px;
-        background-color:white; box-shadow:0 2px 5px rgba(0,0,0,0.05);
-        text-align:center; height:120px; display:flex; flex-direction:column; justify-content:center;">
+    <style>
+    .kpi-widget {{
+        border:1px solid #e0e0e0;
+        border-radius:10px;
+        padding:15px;
+        background-color:white;
+        box-shadow:0 2px 5px rgba(0,0,0,0.05);
+        text-align:center;
+        height:120px;
+        display:flex;
+        flex-direction:column;
+        justify-content:center;
+        transition: all 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+        cursor: pointer;
+        z-index: 1;
+        position: relative;
+    }}
+    .kpi-widget:hover {{
+        transform: translateY(-20px) scale(1.15);
+        box-shadow: 0 20px 40px rgba(255,153,0,0.4);
+        z-index: 999;
+        border-color: #FF9900;
+        border-width: 2px;
+    }}
+    </style>
+    <div class="kpi-widget">
       <div style="font-size:17px; color:#555; margin-bottom:5px;">{title}</div>
       <div style="font-size:28px; font-weight:700; margin:5px 0; color:#000;">{prefix}{formatted_value}{suffix}</div>
       <div style="font-size:13px; color:#888;">
@@ -68,10 +90,32 @@ def render_kpi_widget_with_percentage(title, value, percentage, yoy_pct=None, mo
     formatted_value = f"${round(value):,} <span style='font-size:17px; color:#888'>({percentage:.0f}%)</span>"
 
     st.markdown(f"""
-    <div style="
-        border:1px solid #e0e0e0; border-radius:10px; padding:15px;
-        background-color:white; box-shadow:0 2px 5px rgba(0,0,0,0.05);
-        text-align:center; height:120px; display:flex; flex-direction:column; justify-content:center;">
+    <style>
+    .kpi-widget-with-percentage {{
+        border:1px solid #e0e0e0;
+        border-radius:10px;
+        padding:15px;
+        background-color:white;
+        box-shadow:0 2px 5px rgba(0,0,0,0.05);
+        text-align:center;
+        height:120px;
+        display:flex;
+        flex-direction:column;
+        justify-content:center;
+        transition: all 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+        cursor: pointer;
+        z-index: 1;
+        position: relative;
+    }}
+    .kpi-widget-with-percentage:hover {{
+        transform: translateY(-20px) scale(1.15);
+        box-shadow: 0 20px 40px rgba(255,153,0,0.4);
+        z-index: 999;
+        border-color: #FF9900;
+        border-width: 2px;
+    }}
+    </style>
+    <div class="kpi-widget-with-percentage">
       <div style="font-size:17px; color:#555; margin-bottom:5px;">{title}</div>
       <div style="font-size:28px; font-weight:700; margin:5px 0; color:#000;">{formatted_value}</div>
       <div style="font-size:13px; color:#888;">
@@ -236,7 +280,7 @@ def render_business_metric_widget(sales_df, date_col, original_date, metric_conf
                 # 其他模式：四捨五入為整數
                 value = round(value)
 
-        # 渲染 Widget
+        # 渲染 Widget（保留懸停效果）
         render_kpi_widget(
             metric_config['title'],
             value,
@@ -297,8 +341,11 @@ def calculate_yoy_mom_from_df(df, column_name, current_year, current_month):
     return current_value, yoy_change, mom_change
 
 
-st.set_page_config(page_title="Multi-File Analysis", page_icon="📊", layout="wide")
-st.title("📊 Spark Performance Review")
+st.set_page_config(page_title="Performance Dashboard", page_icon="📊", layout="wide")
+st.title("📊 Performance Dashboard")
+
+# 增加空間
+st.markdown("<div style='margin: 40px 0;'></div>", unsafe_allow_html=True)
 
 # 定義五種文件類型
 file_types = ["Sales Traffic Report", "Total Year Change", "Month YoY", "P0 MCID MBR", "Asin Report"]
@@ -721,7 +768,7 @@ if "Sales Traffic Report" in loaded_data:
 
         if not filtered_sales_df.empty:
             # Sales Widget
-            st.subheader(f"📈 {selected_date} 業務指標")
+            st.subheader(f"📈 {selected_date}")
 
             # 創建 widget 欄位
             metric_col1, metric_col2, metric_col3 = st.columns(3)
@@ -909,6 +956,387 @@ if "Sales Traffic Report" in loaded_data:
             st.write("**Sales Traffic Report 所有欄位:**")
             st.write(list(sales_df.columns))
 
+# ASIN Level 區塊
+if "Asin Report" in loaded_data:
+    st.markdown("---")
+    st.header("📦 ASIN Level")
+
+    asin_df = loaded_data["Asin Report"]
+
+    # 兩個widget
+    col1, col2 = st.columns(2)
+
+    st.markdown("<div style='margin: 20px 0;'></div>", unsafe_allow_html=True)
+
+    with col1:
+        session_median = 0
+        session_mean = 0
+        session_median_yoy = None
+        session_median_mom = None
+        session_mean_yoy = None
+        session_mean_mom = None
+        if 'Sessions - Total' in asin_df.columns:
+            # 排除0的資料
+            session_data = asin_df['Sessions - Total'].dropna()
+            session_data = session_data[session_data != 0]
+            if not session_data.empty:
+                session_median = round(session_data.median())
+                session_mean = round(session_data.mean())
+        if 'Sessions - Total - Prior Period' in asin_df.columns:
+            prior_session_data = asin_df['Sessions - Total - Prior Period'].dropna()
+            prior_session_data = prior_session_data[prior_session_data != 0]
+            if not prior_session_data.empty:
+                prior_session_median = round(prior_session_data.median())
+                prior_session_mean = round(prior_session_data.mean())
+                session_median_mom = (session_median - prior_session_median) / prior_session_median
+                session_mean_mom = (session_mean - prior_session_mean) / prior_session_mean
+
+        if 'Sessions - Total - Last Year' in asin_df.columns:
+            last_year_session_data = asin_df['Sessions - Total - Last Year'].dropna()
+            last_year_session_data = last_year_session_data[last_year_session_data != 0]
+            if not last_year_session_data.empty:
+                last_session_median = round(last_year_session_data.median())
+                last_session_mean = round(last_year_session_data.mean())
+                session_median_yoy = (session_median - last_session_median) / last_session_median
+                session_mean_yoy = (session_mean - last_session_mean) / last_session_mean
+
+        render_kpi_widget("Session (中位數)", session_median, session_median_yoy, session_median_mom)
+
+    with col2:
+        cvr_median = 0
+        cvr_mean = 0
+        cvr_median_yoy = None
+        cvr_median_mom = None
+        cvr_mean_yoy = None
+        cvr_mean_mom = None
+        if 'Unit Session Percentage' in asin_df.columns:
+            # 排除0的資料，並移除 % 符號進行計算
+            cvr_data = asin_df['Unit Session Percentage'].dropna()
+            # 移除 % 符號並轉換為數值
+            cvr_data = cvr_data.apply(
+                lambda x: float(str(x).replace('%', '').strip()) if pd.notna(x) else 0
+            )
+            cvr_data = cvr_data[cvr_data != 0]
+            if not cvr_data.empty:
+                cvr_median = round(cvr_data.median(), 2)
+                cvr_mean = round(cvr_data.mean(), 2)
+        if 'Unit Session % - Prior Period' in asin_df.columns:
+            prior_cvr_data = asin_df['Unit Session % - Prior Period'].dropna()
+            prior_cvr_data = prior_cvr_data.apply(
+                lambda x: float(str(x).replace('%', '').strip()) if pd.notna(x) else 0
+            )
+            prior_cvr_data = prior_cvr_data[prior_cvr_data != 0]
+            if not prior_cvr_data.empty:
+                prior_cvr_median = round(prior_cvr_data.median(), 2)
+                prior_cvr_mean = round(prior_cvr_data.mean(), 2)
+                cvr_median_mom = (cvr_median - prior_cvr_median) * 10000
+                cvr_mean_mom = (cvr_mean - prior_cvr_mean) * 10000
+        if 'Unit Session % - Last Year' in asin_df.columns:
+            last_cvr_data = asin_df['Unit Session % - Last Year'].dropna()
+            last_cvr_data = last_cvr_data.apply(
+                lambda x: float(str(x).replace('%', '').strip()) if pd.notna(x) else 0
+            )
+            last_cvr_data = last_cvr_data[last_cvr_data != 0]
+            if not last_cvr_data.empty:
+                last_cvr_median = round(last_cvr_data.median(), 2)
+                last_cvr_mean = round(last_cvr_data.mean(), 2)
+                cvr_median_yoy = (cvr_median - last_cvr_median) * 10000
+                cvr_mean_yoy = (cvr_mean - last_cvr_mean) * 10000
+
+        render_kpi_widget("CVR (中位數)", cvr_median, cvr_median_yoy, cvr_median_mom, suffix="%", show_change_percent=False)
+
+    # 顯示平均數
+    col3, col4 = st.columns(2)
+
+    with col3:
+        render_kpi_widget("Session (平均數)", session_mean, session_mean_yoy, session_mean_mom)
+
+    with col4:
+        render_kpi_widget("CVR (平均數)", cvr_mean, cvr_mean_yoy, cvr_mean_mom, suffix="%", show_change_percent=False)
+
+    # ASIN Sales 圓餅圖
+    st.markdown("---")
+    st.subheader("📊 ASIN Sales Contribution")
+
+    if 'Sales Contribution %' in asin_df.columns and 'Child ASIN' in asin_df.columns:
+        import plotly.graph_objects as go
+
+        # 準備數據
+        pie_data = asin_df[['Child ASIN', 'Sales Contribution %']].dropna().copy()
+
+        # 將 Sales Contribution % 轉換為數值（去除 % 符號）
+        pie_data['Sales Contribution %'] = pie_data['Sales Contribution %'].apply(
+            lambda x: float(str(x).replace('%', '').strip()) if pd.notna(x) else 0
+        )
+
+        if not pie_data.empty:
+            # 只取前10名，其餘合併為「其他」
+            top_10 = pie_data.nlargest(10, 'Sales Contribution %')
+
+            # 如果超過10筆，將剩餘的合併為「其他」
+            if len(pie_data) > 10:
+                    others_sum = pie_data.iloc[10:]['Sales Contribution %'].sum()
+                    # 創建「其他」的資料
+                    others_row = pd.DataFrame({
+                        'Child ASIN': ['其他'],
+                        'Sales Contribution %': [others_sum]
+                    })
+                    # 合併前10名和「其他」
+                    chart_data = pd.concat([top_10, others_row], ignore_index=True)
+            else:
+                chart_data = top_10
+
+            # 創建圓餅圖
+            fig = go.Figure(data=[go.Pie(
+                labels=chart_data['Child ASIN'],
+                values=chart_data['Sales Contribution %'],
+                hole=0.3,  # 甜甜圈圖效果
+                textposition='auto',
+                textinfo='label+percent',
+                hovertemplate='<b>%{label}</b><br>貢獻度: %{value}%<br>佔比: %{percent}<extra></extra>'
+            )])
+
+            fig.update_layout(
+                title="各 ASIN 銷售貢獻百分比",
+                height=500,
+                showlegend=True,
+                legend=dict(
+                    orientation="v",
+                    yanchor="middle",
+                    y=0.5,
+                    xanchor="left",
+                    x=1.05
+                )
+            )
+
+            st.plotly_chart(fig, use_container_width=True)
+
+            # 顯示主力 ASIN (貢獻度最高的前3名)
+            top_asins = pie_data.nlargest(3, 'Sales Contribution %')
+            st.markdown("**主力 ASIN TOP 3:**")
+            for idx, row in top_asins.iterrows():
+                st.write(f"🏆 **{row['Child ASIN']}**: {row['Sales Contribution %']:.2f}%")
+
+            # 顯示完整的資料表格
+            st.markdown("---")
+            st.markdown("**完整 ASIN 資料:**")
+
+            # 顯示所有欄位的完整資料
+            display_df = asin_df.copy()
+
+            # 重新命名欄位標題
+            column_rename_map = {
+                'Ordered Product Sales': 'Sales',
+                'Ordered Product Sales - Prior Period': 'Sales-lm',
+                'Ordered Product Sales - Last Year': 'Sales-ly',
+                'Sessions - Total': 'Sessions',
+                'Sessions - Total - Prior Period': 'Sessions-lm',
+                'Sessions - Total - Last Year': 'Sessions-ly',
+                'Total Order Items':'Orders',
+                'Total Order Items - Prior Period': 'Orders-lm',
+                'Total Order Items - Last Year': 'Orders-ly',
+                'Unit Session Percentage': 'CVR',
+                'Unit Session % - Prior Period': 'CVR-lm',
+                'Unit Session % - Last Year': 'CVR-ly',
+                'Sales Contribution %':'Sales %',
+                'Total Days of Supply':'TDoS'
+                # 'Original Column Name': 'New Display Name',
+            }
+            display_df = display_df.rename(columns=column_rename_map)
+
+            # 如果有 Sales Contribution % 欄位，按照貢獻度排序
+            contribution_col = 'Sales Contribution %'
+            if contribution_col in display_df.columns:
+                # 創建一個用於排序的數值欄位
+                display_df['_sort_value'] = display_df['Sales Contribution %'].apply(
+                    lambda x: float(str(x).replace('%', '').strip()) if pd.notna(x) else 0
+                )
+                # 排序（由高到低）
+                display_df = display_df.sort_values('_sort_value', ascending=False)
+                # 移除排序用的欄位
+                display_df = display_df.drop(columns=['_sort_value'])
+
+            # 重設索引，從1開始編號
+            display_df = display_df.reset_index(drop=True)
+            display_df.index = display_df.index + 1
+
+            # 定義樣式函數：將 MoM 和 YoY 的正值顯示為綠色，負值顯示為紅色
+            def color_mom_yoy(val):
+                """根據正負值返回顏色"""
+                try:
+                    # 嘗試將值轉換為數字（移除可能的 % 符號和 bps 文字）
+                    num_val = float(str(val).replace('%', '').replace('bps', '').strip())
+                    if num_val > 0:
+                        return 'color: green'
+                    elif num_val < 0:
+                        return 'color: red'
+                    else:
+                        return 'color: black'
+                except:
+                    return ''
+
+
+
+            # 格式化數值欄位
+            def format_values(df):
+                formatted_df = df.copy()
+                for col in formatted_df.columns:
+                    if any(keyword in col.lower() for keyword in ['sales', 'revenue']):
+                        # Sales 相關欄位加上$符號和千位逗號
+                        formatted_df[col] = formatted_df[col].apply(
+                            lambda x: f"${x:,.2f}" if isinstance(x, (int, float)) and pd.notna(x) else x
+                        )
+                    elif any(keyword in col.lower() for keyword in ['available', 'total days of supply', 'totaldays', 'woc', 'tdos']):
+                        # Available, total days of supply, totaldays, woc, tdos 欄位顯示為整數
+                        formatted_df[col] = formatted_df[col].apply(
+                            lambda x: f"{round(x):,}" if isinstance(x, (int, float)) and pd.notna(x) else x
+                        )
+                return formatted_df
+
+            formatted_display_df = format_values(display_df)
+
+            # 找出 MoM 和 YoY 相關的欄位
+            mom_yoy_cols = [col for col in formatted_display_df.columns if 'mom' in col.lower() or 'yoy' in col.lower()]
+
+            # 從分組中提取各類型欄位
+            sales_percentage_cols = [col for col in display_df.columns if col.lower() == 'sales %']
+            sales_cols = [col for col in display_df.columns if col.lower() in ['sales', 'sales-lm', 'sales-ly']]
+            sessions_cols = [col for col in display_df.columns if col.lower() in ['sessions', 'sessions-lm', 'sessions-ly']]
+            orders_cols = [field for field in display_df.columns if field.lower() in ['orders', 'orders-lm', 'orders-ly']]
+            cvr_cols = [field for field in display_df.columns if field.lower() in ['cvr', 'cvr-lm', 'cvr-ly']]
+
+            # 預先計算每組欄位的最小最大值
+            def calculate_group_min_max(df, cols):
+                """計算一組欄位的全局最小最大值"""
+                all_values = []
+                for col in cols:
+                    if col in df.columns:
+                        for val in df[col]:
+                            try:
+                                if isinstance(val, str):
+                                    numeric_val = float(val.replace('$', '').replace(',', '').replace('%', '').strip())
+                                else:
+                                    numeric_val = float(val) if pd.notna(val) else 0
+                                if numeric_val > 0:
+                                    all_values.append(numeric_val)
+                            except:
+                                pass
+
+                if all_values:
+                    return min(all_values), max(all_values)
+                return None, None
+
+            # 計算各組的最小最大值
+            sales_percentage_min, sales_percentage_max = calculate_group_min_max(formatted_display_df, sales_percentage_cols)
+            sales_min, sales_max = calculate_group_min_max(formatted_display_df, sales_cols)
+            sessions_min, sessions_max = calculate_group_min_max(formatted_display_df, sessions_cols)
+            orders_min, orders_max = calculate_group_min_max(formatted_display_df, orders_cols)
+            cvr_min, cvr_max = calculate_group_min_max(formatted_display_df, cvr_cols)
+
+            # 定義通用熱力圖背景色函數
+            def apply_heatmap(col, target_cols, light_rgb, dark_rgb, group_min, group_max):
+                """為指定欄位添加熱力圖背景，並根據背景明度調整字體顏色
+
+                Args:
+                    col: 欄位資料
+                    target_cols: 目標欄位列表
+                    light_rgb: 淺色 RGB 元組 (r, g, b)
+                    dark_rgb: 深色 RGB 元組 (r, g, b)
+                    group_min: 該組欄位的全局最小值
+                    group_max: 該組欄位的全局最大值
+                """
+                if col.name not in target_cols:
+                    return [''] * len(col)
+
+                # 檢查是否有有效的最小最大值
+                if group_min is None or group_max is None:
+                    return [''] * len(col)
+
+                # 提取數值（移除格式化的 $、逗號和 % 符號）
+                numeric_values = []
+                for val in col:
+                    try:
+                        if isinstance(val, str):
+                            # 移除 $、逗號、% 符號和空格
+                            numeric_val = float(val.replace('$', '').replace(',', '').replace('%', '').strip())
+                        else:
+                            numeric_val = float(val) if pd.notna(val) else 0
+                        numeric_values.append(numeric_val)
+                    except:
+                        numeric_values.append(0)
+
+                # 為每個值生成背景色和字體顏色
+                styles = []
+                for val in numeric_values:
+                    if val <= 0:
+                        styles.append('')
+                    else:
+                        # 正規化到 0-1 之間（使用整組的最小最大值）
+                        if group_max > group_min:
+                            normalized = (val - group_min) / (group_max - group_min)
+                        else:
+                            normalized = 0.5
+
+                        # 使用線性插值計算顏色
+                        r = int(light_rgb[0] - (light_rgb[0] - dark_rgb[0]) * normalized)
+                        g = int(light_rgb[1] - (light_rgb[1] - dark_rgb[1]) * normalized)
+                        b = int(light_rgb[2] - (light_rgb[2] - dark_rgb[2]) * normalized)
+
+                        # 計算明度 (luminance) 來決定字體顏色
+                        # 使用公式: luminance = 0.299*R + 0.587*G + 0.114*B
+                        luminance = 0.299 * r + 0.587 * g + 0.114 * b
+
+                        # 如果背景較亮（luminance > 128），使用深色字體；否則使用淺色字體
+                        text_color = 'black' if luminance > 128 else 'white'
+
+                        bg_color = f'rgb({r}, {g}, {b})'
+                        styles.append(f'background-color: {bg_color}; color: {text_color}')
+
+                return styles
+
+            # 應用樣式
+            styled_df = formatted_display_df.style
+
+            # 應用 MoM/YoY 文字顏色
+            if mom_yoy_cols:
+                styled_df = styled_df.apply(lambda x: [color_mom_yoy(v) if x.name in mom_yoy_cols else '' for v in x], axis=0)
+
+            if sales_percentage_cols:
+                styled_df = styled_df.apply(lambda x: apply_heatmap(x, sales_percentage_cols, (227, 242, 253), (25, 118, 210), sales_percentage_min, sales_percentage_max), axis=0)
+
+            # 應用 Sales 熱力圖背景色（藍色系：淺藍 #E3F2FD 到深藍 #1976D2）
+            if sales_cols:
+                styled_df = styled_df.apply(lambda x: apply_heatmap(x, sales_cols, (227, 242, 253), (25, 118, 210), sales_min, sales_max), axis=0)
+
+            # 應用 Sessions 熱力圖背景色（綠色系：淺綠 #E1F5E0 到深綠 #2E7D32）
+            if sessions_cols:
+                styled_df = styled_df.apply(lambda x: apply_heatmap(x, sessions_cols, (225, 245, 224), (46, 125, 50), sessions_min, sessions_max), axis=0)
+
+            # 應用 Orders 熱力圖背景色（紫色系：很淡紫 #F3E5F5 到中紫 #9C27B0）
+            if orders_cols:
+                styled_df = styled_df.apply(lambda x: apply_heatmap(x, orders_cols, (246, 235, 255), (186, 102, 255), orders_min, orders_max), axis=0)
+
+            # 應用 CVR 熱力圖背景色（橘黃色系：淺橘黃 #FFF3E0 到深橘 #F57C00）
+            if cvr_cols:
+                styled_df = styled_df.apply(lambda x: apply_heatmap(x, cvr_cols, (255, 243, 224), (245, 124, 0), cvr_min, cvr_max), axis=0)
+
+
+            def highlight_woc(val):
+                """針對 WOC 欄位條件上色"""
+                if float(val) <= 4:
+                    return "background-color: pink; color: red;"
+                elif float(val) > 8:
+                    return "color: red;"
+                else:
+                    return ""
+
+            styled_df = styled_df.applymap(highlight_woc, subset=["WOC"])
+
+            st.dataframe(styled_df, use_container_width=True)
+        else:
+            st.warning("無可用的 Sales Contribution % 資料")
+    else:
+        st.warning("未找到 Sales Contribution % 欄位")
 # Advertising & Merchandising 區塊
 if "P0 MCID MBR" in loaded_data:
     st.markdown("---")
@@ -1272,376 +1700,3 @@ if "P0 MCID MBR" in loaded_data:
             percentage = (value / total_gms * 100) if total_gms > 0 else 0
             render_kpi_widget_with_percentage(metric['title'], value, percentage, yoy, mom)
 
-# ASIN Level 區塊
-if "Asin Report" in loaded_data:
-    st.markdown("---")
-    st.header("📦 ASIN Level")
-
-    asin_df = loaded_data["Asin Report"]
-
-    # 兩個widget
-    col1, col2 = st.columns(2)
-
-    st.markdown("<div style='margin: 20px 0;'></div>", unsafe_allow_html=True)
-
-    with col1:
-        session_median = 0
-        session_mean = 0
-        if 'Sessions - Total' in asin_df.columns:
-            # 排除0的資料
-            session_data = asin_df['Sessions - Total'].dropna()
-            session_data = session_data[session_data != 0]
-            if not session_data.empty:
-                session_median = round(session_data.median())
-                session_mean = round(session_data.mean())
-        if 'Sessions - Total - Prior Period' in asin_df.columns:
-            prior_session_data = asin_df['Sessions - Total - Prior Period'].dropna()
-            prior_session_data = prior_session_data[prior_session_data != 0]
-            if not prior_session_data.empty:
-                prior_session_median = round(prior_session_data.median())
-                prior_session_mean = round(prior_session_data.mean())
-                session_median_mom = (session_median - prior_session_median) / prior_session_median
-                session_mean_mom = (session_mean - prior_session_mean) / prior_session_mean
-
-        if 'Sessions - Total - Last Year' in asin_df.columns:
-            last_year_session_data = asin_df['Sessions - Total - Last Year'].dropna()
-            last_year_session_data = last_year_session_data[last_year_session_data != 0]
-            if not last_year_session_data.empty:
-                last_session_median = round(last_year_session_data.median())
-                last_session_mean = round(last_year_session_data.mean())
-                session_median_yoy = (session_median - last_session_median) / last_session_median
-                session_mean_yoy = (session_mean - last_session_mean) / last_session_mean
-
-        render_kpi_widget("Session (中位數)", session_median, session_median_yoy, session_median_mom)
-
-    with col2:
-        cvr_median = 0
-        cvr_mean = 0
-        if 'Unit Session Percentage' in asin_df.columns:
-            # 排除0的資料，並移除 % 符號進行計算
-            cvr_data = asin_df['Unit Session Percentage'].dropna()
-            # 移除 % 符號並轉換為數值
-            cvr_data = cvr_data.apply(
-                lambda x: float(str(x).replace('%', '').strip()) if pd.notna(x) else 0
-            )
-            cvr_data = cvr_data[cvr_data != 0]
-            if not cvr_data.empty:
-                cvr_median = round(cvr_data.median(), 2)
-                cvr_mean = round(cvr_data.mean(), 2)
-        if 'Unit Session % - Prior Period' in asin_df.columns:
-            prior_cvr_data = asin_df['Unit Session % - Prior Period'].dropna()
-            prior_cvr_data = prior_cvr_data.apply(
-                lambda x: float(str(x).replace('%', '').strip()) if pd.notna(x) else 0
-            )
-            prior_cvr_data = prior_cvr_data[prior_cvr_data != 0]
-            if not prior_cvr_data.empty:
-                prior_cvr_median = round(prior_cvr_data.median(), 2)
-                prior_cvr_mean = round(prior_cvr_data.mean(), 2)
-                cvr_median_mom = (cvr_median - prior_cvr_median) * 10000
-                cvr_mean_mom = (cvr_mean - prior_cvr_mean) * 10000
-        if 'Unit Session % - Last Year' in asin_df.columns:
-            last_cvr_data = asin_df['Unit Session % - Last Year'].dropna()
-            last_cvr_data = last_cvr_data.apply(
-                lambda x: float(str(x).replace('%', '').strip()) if pd.notna(x) else 0
-            )
-            last_cvr_data = last_cvr_data[last_cvr_data != 0]
-            if not last_cvr_data.empty:
-                last_cvr_median = round(last_cvr_data.median(), 2)
-                last_cvr_mean = round(last_cvr_data.mean(), 2)
-                cvr_median_yoy = (cvr_median - last_cvr_median) * 10000
-                cvr_mean_yoy = (cvr_mean - last_cvr_mean) * 10000
-
-        render_kpi_widget("CVR (中位數)", cvr_median, cvr_median_yoy, cvr_median_mom, suffix="%", show_change_percent=False)
-
-    # 顯示平均數
-    col3, col4 = st.columns(2)
-
-    with col3:
-        render_kpi_widget("Session (平均數)", session_mean, session_mean_yoy, session_mean_mom)
-
-    with col4:
-        render_kpi_widget("CVR (平均數)", cvr_mean, cvr_mean_yoy, cvr_mean_mom, suffix="%", show_change_percent=False)
-
-    # ASIN Sales 圓餅圖
-    st.markdown("---")
-    st.subheader("📊 ASIN Sales Contribution")
-
-    if 'Sales Contribution %' in asin_df.columns and 'Child ASIN' in asin_df.columns:
-        import plotly.graph_objects as go
-
-        # 準備數據
-        pie_data = asin_df[['Child ASIN', 'Sales Contribution %']].dropna().copy()
-
-        # 將 Sales Contribution % 轉換為數值（去除 % 符號）
-        pie_data['Sales Contribution %'] = pie_data['Sales Contribution %'].apply(
-            lambda x: float(str(x).replace('%', '').strip()) if pd.notna(x) else 0
-        )
-
-        if not pie_data.empty:
-            # 只取前10名，其餘合併為「其他」
-            top_10 = pie_data.nlargest(10, 'Sales Contribution %')
-
-            # 如果超過10筆，將剩餘的合併為「其他」
-            if len(pie_data) > 10:
-                    others_sum = pie_data.iloc[10:]['Sales Contribution %'].sum()
-                    # 創建「其他」的資料
-                    others_row = pd.DataFrame({
-                        'Child ASIN': ['其他'],
-                        'Sales Contribution %': [others_sum]
-                    })
-                    # 合併前10名和「其他」
-                    chart_data = pd.concat([top_10, others_row], ignore_index=True)
-            else:
-                chart_data = top_10
-
-            # 創建圓餅圖
-            fig = go.Figure(data=[go.Pie(
-                labels=chart_data['Child ASIN'],
-                values=chart_data['Sales Contribution %'],
-                hole=0.3,  # 甜甜圈圖效果
-                textposition='auto',
-                textinfo='label+percent',
-                hovertemplate='<b>%{label}</b><br>貢獻度: %{value}%<br>佔比: %{percent}<extra></extra>'
-            )])
-
-            fig.update_layout(
-                title="各 ASIN 銷售貢獻百分比",
-                height=500,
-                showlegend=True,
-                legend=dict(
-                    orientation="v",
-                    yanchor="middle",
-                    y=0.5,
-                    xanchor="left",
-                    x=1.05
-                )
-            )
-
-            st.plotly_chart(fig, use_container_width=True)
-
-            # 顯示主力 ASIN (貢獻度最高的前3名)
-            top_asins = pie_data.nlargest(3, 'Sales Contribution %')
-            st.markdown("**主力 ASIN TOP 3:**")
-            for idx, row in top_asins.iterrows():
-                st.write(f"🏆 **{row['Child ASIN']}**: {row['Sales Contribution %']:.2f}%")
-
-            # 顯示完整的資料表格
-            st.markdown("---")
-            st.markdown("**完整 ASIN 資料:**")
-
-            # 顯示所有欄位的完整資料
-            display_df = asin_df.copy()
-
-            # 重新命名欄位標題
-            column_rename_map = {
-                'Ordered Product Sales': 'Sales',
-                'Ordered Product Sales - Prior Period': 'Sales-lm',
-                'Ordered Product Sales - Last Year': 'Sales-ly',
-                'Sessions - Total': 'Sessions',
-                'Sessions - Total - Prior Period': 'Sessions-lm',
-                'Sessions - Total - Last Year': 'Sessions-ly',
-                'Total Order Items':'Orders',
-                'Total Order Items - Prior Period': 'Orders-lm',
-                'Total Order Items - Last Year': 'Orders-ly',
-                'Unit Session Percentage': 'CVR',
-                'Unit Session % - Prior Period': 'CVR-lm',
-                'Unit Session % - Last Year': 'CVR-ly',
-                'Sales Contribution %':'Sales %',
-                'Total Days of Supply':'TDoS'
-                # 'Original Column Name': 'New Display Name',
-            }
-            display_df = display_df.rename(columns=column_rename_map)
-
-            # 如果有 Sales Contribution % 欄位，按照貢獻度排序
-            contribution_col = 'Sales Contribution %'
-            if contribution_col in display_df.columns:
-                # 創建一個用於排序的數值欄位
-                display_df['_sort_value'] = display_df['Sales Contribution %'].apply(
-                    lambda x: float(str(x).replace('%', '').strip()) if pd.notna(x) else 0
-                )
-                # 排序（由高到低）
-                display_df = display_df.sort_values('_sort_value', ascending=False)
-                # 移除排序用的欄位
-                display_df = display_df.drop(columns=['_sort_value'])
-
-            # 重設索引，從1開始編號
-            display_df = display_df.reset_index(drop=True)
-            display_df.index = display_df.index + 1
-
-            # 定義樣式函數：將 MoM 和 YoY 的正值顯示為綠色，負值顯示為紅色
-            def color_mom_yoy(val):
-                """根據正負值返回顏色"""
-                try:
-                    # 嘗試將值轉換為數字（移除可能的 % 符號和 bps 文字）
-                    num_val = float(str(val).replace('%', '').replace('bps', '').strip())
-                    if num_val > 0:
-                        return 'color: green'
-                    elif num_val < 0:
-                        return 'color: red'
-                    else:
-                        return 'color: black'
-                except:
-                    return ''
-
-
-
-            # 格式化數值欄位
-            def format_values(df):
-                formatted_df = df.copy()
-                for col in formatted_df.columns:
-                    if any(keyword in col.lower() for keyword in ['sales', 'revenue']):
-                        # Sales 相關欄位加上$符號和千位逗號
-                        formatted_df[col] = formatted_df[col].apply(
-                            lambda x: f"${x:,.2f}" if isinstance(x, (int, float)) and pd.notna(x) else x
-                        )
-                    elif any(keyword in col.lower() for keyword in ['available', 'total days of supply', 'totaldays', 'woc', 'tdos']):
-                        # Available, total days of supply, totaldays, woc, tdos 欄位顯示為整數
-                        formatted_df[col] = formatted_df[col].apply(
-                            lambda x: f"{round(x):,}" if isinstance(x, (int, float)) and pd.notna(x) else x
-                        )
-                return formatted_df
-
-            formatted_display_df = format_values(display_df)
-
-            # 找出 MoM 和 YoY 相關的欄位
-            mom_yoy_cols = [col for col in formatted_display_df.columns if 'mom' in col.lower() or 'yoy' in col.lower()]
-
-            # 從分組中提取各類型欄位
-            sales_percentage_cols = [col for col in display_df.columns if col.lower() == 'sales %']
-            sales_cols = [col for col in display_df.columns if col.lower() in ['sales', 'sales-lm', 'sales-ly']]
-            sessions_cols = [col for col in display_df.columns if col.lower() in ['sessions', 'sessions-lm', 'sessions-ly']]
-            orders_cols = [field for field in display_df.columns if field.lower() in ['orders', 'orders-lm', 'orders-ly']]
-            cvr_cols = [field for field in display_df.columns if field.lower() in ['cvr', 'cvr-lm', 'cvr-ly']]
-
-            # 預先計算每組欄位的最小最大值
-            def calculate_group_min_max(df, cols):
-                """計算一組欄位的全局最小最大值"""
-                all_values = []
-                for col in cols:
-                    if col in df.columns:
-                        for val in df[col]:
-                            try:
-                                if isinstance(val, str):
-                                    numeric_val = float(val.replace('$', '').replace(',', '').replace('%', '').strip())
-                                else:
-                                    numeric_val = float(val) if pd.notna(val) else 0
-                                if numeric_val > 0:
-                                    all_values.append(numeric_val)
-                            except:
-                                pass
-
-                if all_values:
-                    return min(all_values), max(all_values)
-                return None, None
-
-            # 計算各組的最小最大值
-            sales_percentage_min, sales_percentage_max = calculate_group_min_max(formatted_display_df, sales_percentage_cols)
-            sales_min, sales_max = calculate_group_min_max(formatted_display_df, sales_cols)
-            sessions_min, sessions_max = calculate_group_min_max(formatted_display_df, sessions_cols)
-            orders_min, orders_max = calculate_group_min_max(formatted_display_df, orders_cols)
-            cvr_min, cvr_max = calculate_group_min_max(formatted_display_df, cvr_cols)
-
-            # 定義通用熱力圖背景色函數
-            def apply_heatmap(col, target_cols, light_rgb, dark_rgb, group_min, group_max):
-                """為指定欄位添加熱力圖背景，並根據背景明度調整字體顏色
-
-                Args:
-                    col: 欄位資料
-                    target_cols: 目標欄位列表
-                    light_rgb: 淺色 RGB 元組 (r, g, b)
-                    dark_rgb: 深色 RGB 元組 (r, g, b)
-                    group_min: 該組欄位的全局最小值
-                    group_max: 該組欄位的全局最大值
-                """
-                if col.name not in target_cols:
-                    return [''] * len(col)
-
-                # 檢查是否有有效的最小最大值
-                if group_min is None or group_max is None:
-                    return [''] * len(col)
-
-                # 提取數值（移除格式化的 $、逗號和 % 符號）
-                numeric_values = []
-                for val in col:
-                    try:
-                        if isinstance(val, str):
-                            # 移除 $、逗號、% 符號和空格
-                            numeric_val = float(val.replace('$', '').replace(',', '').replace('%', '').strip())
-                        else:
-                            numeric_val = float(val) if pd.notna(val) else 0
-                        numeric_values.append(numeric_val)
-                    except:
-                        numeric_values.append(0)
-
-                # 為每個值生成背景色和字體顏色
-                styles = []
-                for val in numeric_values:
-                    if val <= 0:
-                        styles.append('')
-                    else:
-                        # 正規化到 0-1 之間（使用整組的最小最大值）
-                        if group_max > group_min:
-                            normalized = (val - group_min) / (group_max - group_min)
-                        else:
-                            normalized = 0.5
-
-                        # 使用線性插值計算顏色
-                        r = int(light_rgb[0] - (light_rgb[0] - dark_rgb[0]) * normalized)
-                        g = int(light_rgb[1] - (light_rgb[1] - dark_rgb[1]) * normalized)
-                        b = int(light_rgb[2] - (light_rgb[2] - dark_rgb[2]) * normalized)
-
-                        # 計算明度 (luminance) 來決定字體顏色
-                        # 使用公式: luminance = 0.299*R + 0.587*G + 0.114*B
-                        luminance = 0.299 * r + 0.587 * g + 0.114 * b
-
-                        # 如果背景較亮（luminance > 128），使用深色字體；否則使用淺色字體
-                        text_color = 'black' if luminance > 128 else 'white'
-
-                        bg_color = f'rgb({r}, {g}, {b})'
-                        styles.append(f'background-color: {bg_color}; color: {text_color}')
-
-                return styles
-
-            # 應用樣式
-            styled_df = formatted_display_df.style
-
-            # 應用 MoM/YoY 文字顏色
-            if mom_yoy_cols:
-                styled_df = styled_df.apply(lambda x: [color_mom_yoy(v) if x.name in mom_yoy_cols else '' for v in x], axis=0)
-
-            if sales_percentage_cols:
-                styled_df = styled_df.apply(lambda x: apply_heatmap(x, sales_percentage_cols, (227, 242, 253), (25, 118, 210), sales_percentage_min, sales_percentage_max), axis=0)
-
-            # 應用 Sales 熱力圖背景色（藍色系：淺藍 #E3F2FD 到深藍 #1976D2）
-            if sales_cols:
-                styled_df = styled_df.apply(lambda x: apply_heatmap(x, sales_cols, (227, 242, 253), (25, 118, 210), sales_min, sales_max), axis=0)
-
-            # 應用 Sessions 熱力圖背景色（綠色系：淺綠 #E1F5E0 到深綠 #2E7D32）
-            if sessions_cols:
-                styled_df = styled_df.apply(lambda x: apply_heatmap(x, sessions_cols, (225, 245, 224), (46, 125, 50), sessions_min, sessions_max), axis=0)
-
-            # 應用 Orders 熱力圖背景色（紫色系：很淡紫 #F3E5F5 到中紫 #9C27B0）
-            if orders_cols:
-                styled_df = styled_df.apply(lambda x: apply_heatmap(x, orders_cols, (246, 235, 255), (186, 102, 255), orders_min, orders_max), axis=0)
-
-            # 應用 CVR 熱力圖背景色（橘黃色系：淺橘黃 #FFF3E0 到深橘 #F57C00）
-            if cvr_cols:
-                styled_df = styled_df.apply(lambda x: apply_heatmap(x, cvr_cols, (255, 243, 224), (245, 124, 0), cvr_min, cvr_max), axis=0)
-
-
-            def highlight_woc(val):
-                """針對 WOC 欄位條件上色"""
-                if float(val) <= 4:
-                    return "background-color: pink; color: red;"
-                elif float(val) > 8:
-                    return "color: red;"
-                else:
-                    return ""
-
-            styled_df = styled_df.applymap(highlight_woc, subset=["WOC"])
-
-            st.dataframe(styled_df, use_container_width=True)
-        else:
-            st.warning("無可用的 Sales Contribution % 資料")
-    else:
-        st.warning("未找到 Sales Contribution % 欄位")

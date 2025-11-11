@@ -65,12 +65,14 @@ def show_customer_id_filter_tab(df, selected_file):
     # 🔹 根據 Customer ID 和 Marketplace ID 過濾數據
     # -------------------------
     filtered_df = df.copy()
+    has_filter_input = False
 
     if customer_input:
         ids = [x.strip() for x in customer_input.split(",") if x.strip()]
         if ids:
             filtered_df = filtered_df[filtered_df['merchant_customer_id'].astype(str).isin(ids)]
             st.info(f"已篩選出 {len(filtered_df)} 筆資料，包含 {len(ids)} 個Customer ID")
+            has_filter_input = True
         else:
             st.warning("請輸入有效的Customer ID")
 
@@ -78,6 +80,7 @@ def show_customer_id_filter_tab(df, selected_file):
     if marketplace_filter:
         filtered_df = filtered_df[filtered_df['marketplace_id'].isin(marketplace_filter)]
         st.info(f"已篩選 Marketplace: {', '.join(map(str, marketplace_filter))}，剩餘 {len(filtered_df)} 筆資料")
+        has_filter_input = True
 
     # 加入間距
     st.markdown("<br>", unsafe_allow_html=True)
@@ -140,8 +143,12 @@ def show_customer_id_filter_tab(df, selected_file):
         else:
             st.warning("請至少選擇一個欄位來顯示數據")
 
-        # 圖表區域 - 動態選擇欄位
-        if 'calendar_year' in filtered_df.columns and 'calendar_month' in filtered_df.columns:
+        # -------------------------
+        # 🔹 圖表區域 - 只在有篩選條件時顯示
+        # -------------------------
+        if not has_filter_input:
+            st.info("💡 請輸入 Merchant Customer ID 或選擇 Marketplace ID 來查看圖表")
+        elif 'calendar_year' in filtered_df.columns and 'calendar_month' in filtered_df.columns:
             st.subheader("📈 趨勢圖表")
 
             # 找出可繪圖的數值欄位
@@ -261,8 +268,8 @@ def show_customer_id_filter_tab(df, selected_file):
         st.warning("⚠️ 沒有符合條件的數據")
 
 
-st.set_page_config(page_title="Performance Review", page_icon="👤", layout="wide")
-st.title("👤 Performance Review")
+st.set_page_config(page_title="Metrics Tracker", page_icon="📈", layout="wide")
+st.title("📈 Metrics Tracker")
 
 # 初始化 session_state 來保存數據
 if 'performance_review_loaded_data' not in st.session_state:

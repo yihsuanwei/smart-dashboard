@@ -577,8 +577,8 @@ def show_original_analysis_tab(df, selected_file):
         )
 
 
-st.set_page_config(page_title="Quick Glance", page_icon="📑", layout="wide")
-st.title("📑 Quick Glance")
+st.set_page_config(page_title="Seller Finder", page_icon="🔍", layout="wide")
+st.title("🔍 Seller Finder")
 
 # 初始化 session_state 來保存數據
 if 'quick_glance_loaded_data' not in st.session_state:

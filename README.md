@@ -4,12 +4,14 @@
 
 ## 🎯 功能特色
 
-✅ **多檔案類型支援** - 支援 5 種業務檔案類型分類管理
+✅ **多檔案類型支援** - 支援 5 種業務檔案類型分類管理（P0 MCID MBR、Sales Traffic Report、Total Year Change、Month YoY、Asin Report）
 ✅ **智能檔案分類** - 自動分類存儲不同類型的業務數據
-✅ **綜合分析儀表板** - Spark Performance Review 多維度分析
-✅ **互動式圖表** - 即時篩選和視覺化，支援 YoY/MoM 比較
-✅ **本機運行** - 數據安全不上傳網路
-✅ **多頁面分析** - 資料處理、快速瀏覽、績效評估、多檔案分析
+✅ **綜合分析儀表板** - Performance Dashboard 多維度績效分析（銷售、廣告、ASIN）
+✅ **客戶指標追蹤** - Metrics Tracker 支援多年度趨勢對比與自訂指標
+✅ **賣家快速篩選** - Seller Finder 多維度條件篩選與統計視覺化
+✅ **互動式圖表** - 即時篩選和視覺化，支援 YoY/MoM 比較與熱力圖
+✅ **可編輯表格** - 支援即時修改數據，自動計算 YoY 反推
+✅ **本機運行** - 數據安全不上傳網路，完全離線使用
 
 ---
 
@@ -90,9 +92,9 @@ smart_dashboard_20251011/
 進入應用後，你會看到四個主要功能頁面：
 
 1. **📤 Upload** - 檔案上傳、分類和預處理
-2. **📊 Multi File Analysis** - 多檔案整合分析，主要看指定單一客戶的 Performance
-3. **👤 Performance Review** - 客戶績效評估和趨勢分析 (待更新)
-4. **📑 Quick Glance** - 快速數據瀏覽和篩選分析，可用於篩選指定條件的名單並下載
+2. **📊 Performance Dashboard** - 多檔案整合分析儀表板，展示銷售、廣告、ASIN 等綜合績效
+3. **📈 Metrics Tracker** - 客戶指標追蹤與趨勢分析，支援多年度對比
+4. **🔍 Seller Finder** - 快速數據瀏覽和篩選分析，可用於篩選指定條件的名單並下載
 
 ### 📤 Upload 使用流程
 
@@ -111,67 +113,119 @@ smart_dashboard_20251011/
 5. **看到氣球動畫表示上傳成功** 🎈
 6. 系統自動分類存儲到對應資料夾
 
-### 📊 Multi File Analysis 使用流程
+### 📊 Performance Dashboard 使用流程
 
 **⚠️ 使用前準備：**
 1. **先前往「Upload」頁面上傳所需檔案**
 2. **確保已上傳 5 種不同類型的檔案**：
    - Sales Traffic Report
-   - Total Year Change  
+   - Total Year Change
    - Month YoY
    - P0 MCID MBR
    - Asin Report
 
 **📊 分析步驟：**
 1. **選擇多檔案**：從已上傳的檔案中選擇 5 種不同類型
-   
+
    💡 **Raw Data 下載準備**：使用 Tampermonkey 腳本下載原始數據
-   
+
    **🔧 安裝 Tampermonkey 擴充功能**
    - Chrome：前往 [Chrome Web Store](https://chrome.google.com/webstore) 搜尋「Tampermonkey」
    - Firefox：前往 [Firefox Add-ons](https://addons.mozilla.org) 搜尋「Tampermonkey」
    - Edge：前往 [Microsoft Edge Add-ons](https://microsoftedge.microsoft.com/addons) 搜尋「Tampermonkey」
-   
+
    **📜 安裝數據下載腳本**：
-   - 📦 [Inventory ASIN Table Viewer](https://greasyfork.org/zh-TW/scripts/551928-inventory-asin-table-viewer) 
-   - 📊 [Sales Traffic Business Report Viewer](https://greasyfork.org/zh-TW/scripts/551929-sales-traffic-business-report-viewer) 
+   - 📦 [Inventory ASIN Table Viewer](https://greasyfork.org/zh-TW/scripts/551928-inventory-asin-table-viewer)
+   - 📊 [Sales Traffic Business Report Viewer](https://greasyfork.org/zh-TW/scripts/551929-sales-traffic-business-report-viewer)
    - 📈 [Sales Dashboard Viewer](https://greasyfork.org/zh-TW/scripts/551930-sales-dashboard-viewer)
-   
+
    **📋 數據下載流程**：
    - 登入指定賣家 Amazon Seller Central → 切換英文介面 → 在 landing page 腳本即可啟用 → 一鍵下載 CSV → 檔案分類上傳
-2. **Overall Sales Summary**：功能說明
-   - YTD Sales、Total Order Items 等 KPI
-   - 月度銷售趨勢圖（支援可編輯表格）
-3. **Business Metrics**：功能說明
-   - 選擇日期查看 Sales、CVR、Sessions 等指標
-   - 多指標趨勢對比圖表
-4. **Advertising & Merchandising**：功能說明
-   - 輸入 MCID，選擇市場、年月查看數據
-   - Ads Spend & Revenue 趨勢圖
-5. **ASIN Level**：功能說明
-   - Session 和 CVR 的中位數/平均數分析
-   - ASIN 銷售貢獻圓餅圖
 
-### 📑 Quick Glance 使用流程
+2. **📈 Overall Sales Summary**：年度銷售概覽
+   - 顯示 YTD Sales、Total Order Items、Units Ordered、Average sales/order item 等關鍵 KPI
+   - 月度銷售趨勢圖（This Year vs Last Year），支援 YoY 百分比顯示
+   - **可編輯表格**：可直接在表格中修改數據，輸入 YoY% 會自動計算 This Year Sales
+
+3. **📊 Business Metrics**：業務指標分析
+   - 選擇日期查看當月的 Sales、Total Order Items、Sessions、CVR、ASP 等指標
+   - 每個指標顯示 YoY 和 MoM 變化百分比
+   - 多指標趨勢對比圖表（支援選擇多個指標，每個指標獨立顯示 This Year vs Last Year）
+
+4. **📢 Advertising & Merchandising**：廣告與促銷分析
+   - **必選篩選器**：選擇 Customer ID (CID) 和 Marketplace ID
+   - 選擇年月查看廣告數據
+   - **第一排 KPI**：TACOS、Ads spending、SP ops（含 YoY/MoM 變化）
+   - **趨勢圖**：Revenue vs Ads Spending 時間序列對比
+   - **第二排 KPI**：Promotion、Deal、Coupon 數量
+   - **第三排 KPI**：Promotion OPS、Deal OPS、Coupon OPS（含銷售佔比百分比）
+
+5. **📦 ASIN Level**：商品層級分析
+   - Session 和 CVR 的中位數/平均數統計（含 YoY/MoM 變化）
+   - **ASIN 銷售貢獻圓餅圖**：顯示 Top 10 ASIN 的銷售貢獻百分比
+   - **完整 ASIN 資料表**：
+     - 顯示所有 ASIN 的詳細數據（Sales, Sessions, Orders, CVR 等）
+     - 支援熱力圖視覺化（不同指標使用不同顏色系統）
+     - 自動標示 WOC (Weeks of Coverage) 警示（≤4週顯示粉紅底紅字，>8週顯示紅字）
+
+### 📈 Metrics Tracker 使用流程
+
+**功能說明**：專注於追蹤特定客戶的績效指標與趨勢變化
 
 1. **選擇檔案**：選擇 P0 MCID MBR 類型檔案
-2. **設定篩選條件**：
-   - Basic：年份、市場、渠道
-   - GMS：YTD Order GMS 範圍
-   - Ads：TACoS、SP 採用率等
-   - Selection Funnel：BA、AWAS 相關指標
-   - Feature Adoption：品牌代表、A+ 等功能採用
-3. **查看統計**：關鍵指標統計（平均值、百分位數）
-4. **數據預覽**：可自訂顯示欄位，支援 CID 搜尋
-5. **排除功能**：可排除特定 Customer ID
 
-### 👤 Performance Review 使用流程
+2. **篩選客戶**：
+   - 輸入 Merchant Customer ID（支援多個 ID，逗號分隔）
+   - 選擇 Marketplace ID（可多選）
+
+3. **數據預覽**：
+   - 自訂顯示欄位（預設顯示：year, month, CID, merchant_name, opportunity_owner, ytd/mtd/wtd_ord_gms）
+   - 顯示前 100 筆數據
+   - 支援按 `mtd_new_fba_ba_90d` 排序
+
+4. **趨勢圖表**：
+   - 選擇要顯示的業務指標（支援多選）
+   - 年份控制：可選擇顯示 2024、2025 或兩者對比
+   - 每行顯示 2 個圖表，自動排版
+   - 支援所有數值型欄位的趨勢分析
+
+### 🔍 Seller Finder 使用流程
+
+**功能說明**：快速篩選符合特定條件的賣家名單，支援多維度條件組合
 
 1. **選擇檔案**：選擇 P0 MCID MBR 類型檔案
-2. **輸入 Customer ID**：可輸入多個 ID（逗號分隔）
-3. **查看 KPI**：MTD GMS、TACoS 等關鍵指標
-4. **趨勢分析**：支援多指標、多年份對比圖表
-5. **自訂分析**：可選擇顯示欄位和圖表指標
+
+2. **設定篩選條件**（側邊欄）：
+   - **🔹 Basic**：calendar_year、calendar_month、marketplace_id、launch_channel
+   - **💰 GMS**：YTD Order GMS 範圍（最小值/最大值輸入）
+   - **📢 Ads**：
+     - MTD TACoS (%) 範圍（最小值/最大值輸入）
+     - YTD SP Adopt、MTD SP Active Seller
+   - **🎯 Selection Funnel**：
+     - New BA Percentile（Top 50%/75%/90%）
+     - BA Percentile（Top 50%/75%/90%）
+     - New BA/AWAS% Filter（Greater than/Less than/Equal to + 閾值）
+     - BA/AWAS% Filter（Greater than/Less than/Equal to + 閾值）
+   - **⚡ Feature Adoption**：is_brand_rep、ytd_pl_launch、is_aplus_adopt、vine_launch_90days、ytd_fba_adopt、ytd_coupon_adopt
+
+3. **查看統計分析**：
+   - **關鍵指標統計**：New_AWAS_BA_%、AWAS_BA_%、mtd_TACoS
+   - **視覺化圖表**：
+     - 箱型圖（顯示平均值、標準差、異常值）
+     - 直方圖（含平均值和中位數標線）
+   - **詳細統計表**：樣本數、平均值、P25/P50/P75、標準差、最小值/最大值
+
+4. **數據預覽與下載**：
+   - 自訂顯示欄位（預設顯示前 6 個重要欄位）
+   - 支援 CID 搜尋（可輸入多個，逗號分隔）
+   - 按 `mtd_new_fba_ba_90d` 排序，顯示前 100 筆
+   - **下載篩選後的數據**（CSV 格式）
+
+5. **排除功能**：
+   - 可貼上要排除的 Customer ID（支援逗號或換行分隔）
+   - 顯示排除前後的數據筆數
+   - 預覽排除後的結果
+   - **下載排除後的數據**（CSV 格式）
 
 ---
 
@@ -474,15 +528,21 @@ A: 不會，所有數據都在本機處理，完全離線運行
 
 ### 📁 專案結構說明
 ```
-upload.py                 # Streamlit 主應用程式（資料處理中心）
+upload.py                          # Streamlit 主應用程式（資料處理中心）
 pages/
-├── quick_glance.py       # 快速瀏覽分析頁面
-├── performance_review.py # 績效評估頁面
-└── multi_file_analysis.py # 多檔案整合分析頁面
-utils.py                  # 共用工具函數（含檔案分類邏輯）
-requirements.txt          # Python 套件依賴清單
-setup.bat                # Windows 安裝腳本
-start.bat                # Windows 啟動腳本
+├── 1_performance_dashboard.py     # Performance Dashboard（多檔案整合分析）
+├── 2_metrics_tracker.py           # Metrics Tracker（客戶指標追蹤）
+└── 3_seller_finder.py             # Seller Finder（賣家查找與篩選）
+utils.py                           # 共用工具函數（含檔案分類邏輯）
+requirements.txt                   # Python 套件依賴清單
+setup.bat                          # Windows 安裝腳本
+start.bat                          # Windows 啟動腳本
+uploaded_data/                     # 數據存儲目錄
+├── p0_mcid_mbr/                   # P0 MCID MBR 檔案
+├── sales_traffic_report/          # 銷售流量報告
+├── total_year_change/             # 年度變化數據
+├── month_yoy/                     # 月度同比數據
+└── asin_report/                   # 商品層級報告
 ```
 
 ### 🔧 自訂修改
@@ -513,25 +573,61 @@ start.bat                # Windows 啟動腳本
 
 ---
 
-**版本 3.0** | **更新日期：2025-01-14** | **多檔案整合分析版本**
+**版本 3.1** | **更新日期：2025-01-26** | **績效追蹤與賣家查找強化版**
 
 ---
 
-## 🆕 版本 3.0 新功能
+## 🆕 版本更新歷史
 
-### 🔥 核心升級
+### 版本 3.1.1 (2025-11-07)
+
+**⚡ 效能優化**
+- **Metrics Tracker 載入速度優化**：
+  - 頁面初始載入時僅顯示數據預覽表格，不執行圖表運算
+  - 圖表僅在輸入篩選條件（Customer ID 或 Marketplace ID）後才開始渲染
+  - 大幅提升初始載入速度，改善使用體驗
+
+### 版本 3.1 (2025-11-07)
+
+**🔄 頁面重新命名與功能調整**
+- **Performance Dashboard**（原 Multi File Analysis）：強化多檔案整合分析
+- **Metrics Tracker**（原 Performance Review）：新增多年度趨勢對比、可自訂指標圖表
+- **Seller Finder**（原 Quick Glance）：增強篩選功能、統計視覺化、多重下載選項
+
+**📊 Performance Dashboard 增強**
+- 新增 ASIN Level 熱力圖視覺化（Sales/Sessions/Orders/CVR 不同顏色系統）
+- WOC (Weeks of Coverage) 自動警示功能
+- Advertising 區塊新增必選篩選器（CID + Marketplace）
+- Overall Sales Summary 可編輯表格支援自動計算
+
+**📈 Metrics Tracker 新功能**
+- 支援多年度對比（2024 vs 2025）
+- 不限圖表數量，每行顯示 2 張自動排版
+- 支援所有數值型欄位的趨勢分析
+- 新增 Marketplace 多選篩選
+
+**🔍 Seller Finder 強化**
+- 新增關鍵指標統計視覺化（箱型圖 + 直方圖）
+- 詳細統計表（P25/P50/P75 百分位數）
+- 支援 CID 搜尋功能
+- 排除功能支援逗號或換行分隔
+- 雙重下載選項（篩選後 + 排除後）
+
+### 版本 3.0 (2025-01-14)
+
+**🔥 核心升級**
 - **智能檔案分類系統** - 5 種業務檔案類型自動分類管理
-- **Spark Performance Review** - 多檔案整合分析儀表板
+- **多檔案整合分析** - Performance Dashboard 整合多數據源
 - **可編輯數據表格** - 支援即時修改和自動計算
 - **增強的視覺化** - YoY/MoM 對比、趨勢分析、圓餅圖
 
-### 📈 分析功能
+**📈 分析功能**
 - **Overall Sales Summary** - YTD 銷售概覽和月度趨勢
 - **Business Metrics** - 多維度業務指標分析
 - **Advertising & Merchandising** - 廣告投放效果分析
 - **ASIN Level Analysis** - 商品層級深度分析
 
-### 🛠️ 技術改進
+**🛠️ 技術改進**
 - **模組化架構** - 更清晰的頁面分工和功能劃分
 - **數據處理優化** - 支援更多數據格式和計算邏輯
 - **用戶體驗提升** - 更直觀的操作流程和視覺反饋
