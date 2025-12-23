@@ -5,13 +5,13 @@ import pandas as pd
 import base64
 
 
-def render_kpi_widget(title, value, yoy_pct=None, mom_pct=None, prefix="", suffix="", show_change_percent=True):
+def render_kpi_widget(title, value, yoy_pct=None, mom_pct=None, prefix="", suffix="", show_change_percent=True, help_text=None):
     """渲染 KPI Widget"""
     def format_change(val, show_percent=True):
         if val is None or val == "-":
             return "-"
 
-        # 格式化數值（加千分位）
+        # 格式化數值(加千分位)
         if show_percent:
             formatted_val = f"{val:.1f}%"
         else:
@@ -36,6 +36,21 @@ def render_kpi_widget(title, value, yoy_pct=None, mom_pct=None, prefix="", suffi
             formatted_value = f"{round(value):,}"
     else:
         formatted_value = str(value)
+
+    # 如果有 help_text，在標題旁邊加上 tooltip 圖示
+    title_with_help = title
+    if help_text:
+        # HTML encode the help text for proper display and preserve line breaks
+        help_text_escaped = help_text.replace('"', '&quot;').replace("'", '&#39;').replace('\n', '<br>')
+        title_with_help = f'''{title} <span class="info-tooltip">
+            <span class="info-icon">
+                <svg width="16" height="16" viewBox="0 0 16 16" style="vertical-align: middle;">
+                    <circle cx="8" cy="8" r="7" stroke="currentColor" stroke-width="1.5" fill="none"/>
+                    <text x="8" y="11" text-anchor="middle" font-size="10" font-weight="bold" fill="currentColor">?</text>
+                </svg>
+            </span>
+            <span class="info-content">{help_text_escaped}</span>
+        </span>'''
 
     st.markdown(f"""
     <style>
@@ -62,9 +77,63 @@ def render_kpi_widget(title, value, yoy_pct=None, mom_pct=None, prefix="", suffi
         border-color: #FF9900;
         border-width: 2px;
     }}
+    .info-tooltip {{
+        display: inline-block;
+        margin-left: 6px;
+        position: relative;
+        cursor: help;
+        vertical-align: middle;
+    }}
+    .info-icon {{
+        color: #999;
+        transition: all 0.3s ease;
+        display: inline-block;
+        vertical-align: middle;
+    }}
+    .info-tooltip:hover .info-icon {{
+        color: #FF9900;
+        transform: scale(1.15);
+    }}
+    .info-content {{
+        visibility: hidden;
+        opacity: 0;
+        position: absolute;
+        bottom: 150%;
+        left: 50%;
+        transform: translateX(-50%);
+        background-color: rgba(40, 40, 40, 0.98);
+        color: white;
+        padding: 14px 18px;
+        border-radius: 10px;
+        font-size: 12.5px;
+        line-height: 1.7;
+        min-width: 260px;
+        max-width: 340px;
+        width: max-content;
+        z-index: 999999;
+        box-shadow: 0 6px 20px rgba(0,0,0,0.35);
+        font-weight: normal;
+        text-align: left;
+        pointer-events: none;
+        white-space: normal;
+        transition: all 0.3s ease;
+    }}
+    .info-content::after {{
+        content: '';
+        position: absolute;
+        top: 100%;
+        left: 50%;
+        transform: translateX(-50%);
+        border: 8px solid transparent;
+        border-top-color: rgba(40, 40, 40, 0.98);
+    }}
+    .info-tooltip:hover .info-content {{
+        visibility: visible;
+        opacity: 1;
+    }}
     </style>
     <div class="kpi-widget">
-      <div style="font-size:17px; color:#555; margin-bottom:5px;">{title}</div>
+      <div style="font-size:17px; color:#555; margin-bottom:5px;">{title_with_help}</div>
       <div style="font-size:28px; font-weight:700; margin:5px 0; color:#000;">{prefix}{formatted_value}{suffix}</div>
       <div style="font-size:13px; color:#888;">
         YoY {yoy_html} | MoM {mom_html}
@@ -427,28 +496,32 @@ if "Total Year Change" in loaded_data:
             'title': 'YTD Sales',
             'keywords': ['ordered product sales'],
             'prefix': '$',
-            'decimal': False
+            'decimal': False,
+            'help_text': 'YoY 計算採同期比較法：今年資料截至當前日期，去年則計算至相同日期，確保比較基準一致。\n\nYoY calculation uses same-period comparison: current year data up to today\'s date, compared with prior year data up to the same date.'
         },
         {
             'column': widget_col2,
             'title': 'YTD - Total Order Items',
             'keywords': ['total order items'],
             'prefix': '',
-            'decimal': False
+            'decimal': False,
+            'help_text': 'YoY 計算採同期比較法：今年資料截至當前日期，去年則計算至相同日期，確保比較基準一致。\n\nYoY calculation uses same-period comparison: current year data up to today\'s date, compared with prior year data up to the same date.'
         },
         {
             'column': widget_col3,
             'title': 'YTD - Units Ordered',
             'keywords': ['units ordered'],
             'prefix': '',
-            'decimal': False
+            'decimal': False,
+            'help_text': 'YoY 計算採同期比較法：今年資料截至當前日期，去年則計算至相同日期，確保比較基準一致。\n\nYoY calculation uses same-period comparison: current year data up to today\'s date, compared with prior year data up to the same date.'
         },
         {
             'column': widget_col4,
             'title': 'Average sales/order item',
             'keywords': ['average sales/order item'],
             'prefix': '$',
-            'decimal': True  # 需要保留兩位小數
+            'decimal': True,  # 需要保留兩位小數
+            'help_text': 'YoY 計算採同期比較法：今年資料截至當前日期，去年則計算至相同日期，確保比較基準一致。\n\nYoY calculation uses same-period comparison: current year data up to today\'s date, compared with prior year data up to the same date.'
         }
     ]
 
@@ -461,7 +534,13 @@ if "Total Year Change" in loaded_data:
                 value_rounded = round(value, 2) if metric.get('decimal', False) else round(value)
             else:
                 value_rounded = value
-            render_kpi_widget(metric['title'], value_rounded, change, prefix=metric['prefix'])
+            render_kpi_widget(
+                metric['title'],
+                value_rounded,
+                change,
+                prefix=metric['prefix'],
+                help_text=metric.get('help_text')
+            )
 
     # 月度銷售趨勢圖
     if "Month YoY" in loaded_data:
@@ -622,7 +701,7 @@ if "Total Year Change" in loaded_data:
                     st.session_state.monthly_sales_last_file = current_month_yoy_file
 
                 # 提示訊息
-                st.info(f"💡 提示：在 YoY (%) 列輸入百分比值，系統會自動計算對應的 This Year Sales")
+                st.info(f"💡 提示：若某月份的 This Year Sales 原始資料為空，可在 YoY (%) 列輸入百分比值，系統會自動反推計算對應的 This Year Sales")
 
                 # 使用可編輯的資料表格
                 edited_df = st.data_editor(
@@ -637,14 +716,18 @@ if "Total Year Change" in loaded_data:
                 )
 
                 # 自動計算邏輯：當 YoY 被修改時，自動計算 This Year Sales
+                # 只有在原始資料中 This Year 沒有值時才反推計算
                 updated = False
                 for i, month in enumerate(all_months):
                     yoy_val = edited_df.loc[2, month]  # YoY (%)
                     last_year_val = edited_df.loc[0, month]  # Last Year Sales
                     current_this_year = edited_df.loc[1, month]  # 當前的 This Year Sales
 
-                    # 如果 YoY 有值且 Last Year 有值，自動計算 This Year Sales
-                    if pd.notna(yoy_val) and pd.notna(last_year_val):
+                    # 檢查原始資料中此月份是否有 This Year Sales
+                    original_has_value = st.session_state.original_this_year_has_value.get(month, False)
+
+                    # 只有在原始資料沒有 This Year Sales 的情況下，才用 YoY 反推計算
+                    if not original_has_value and pd.notna(yoy_val) and pd.notna(last_year_val):
                         calculated_this_year = last_year_val * (1 + yoy_val / 100)
                         # 檢查是否需要更新（避免無限循環）
                         if pd.isna(current_this_year) or abs(current_this_year - calculated_this_year) > 0.01:
@@ -963,6 +1046,55 @@ if "Asin Report" in loaded_data:
 
     asin_df = loaded_data["Asin Report"]
 
+    # B2B 分析區塊
+    if 'B2B Sales' in asin_df.columns and 'B2B %' in asin_df.columns:
+        # 計算整體 B2B 佔比（確保轉換為數值型別）
+        try:
+            # 處理可能的字串格式（移除 $ 符號）
+            def clean_number(val):
+                if pd.isna(val):
+                    return 0.0
+                if isinstance(val, str):
+                    return float(val.replace('$', '').replace(',', '').strip())
+                return float(val)
+
+            total_sales = asin_df['Ordered Product Sales'].apply(clean_number).sum() if 'Ordered Product Sales' in asin_df.columns else 0.0
+            total_b2b = asin_df['B2B Sales'].apply(clean_number).sum()
+            b2b_percentage = (total_b2b / total_sales * 100) if total_sales > 0 else 0.0
+        except Exception as e:
+            st.error(f"計算 B2B 佔比時發生錯誤: {e}")
+            b2b_percentage = 0.0
+
+        # 根據 5% 門檻顯示警示
+        if b2b_percentage > 5:
+            st.warning(f"⚠️ B2B 佔比達 {b2b_percentage:.1f}% - 以下 ASIN 需關注")
+
+            # 只顯示 B2B% > 5% 的 ASIN
+            high_b2b_asins = asin_df[asin_df['B2B %'].apply(
+                lambda x: float(str(x).replace('%', '').strip()) if pd.notna(x) else 0
+            ) > 5].copy()
+
+            if not high_b2b_asins.empty:
+                # 排序：按 B2B Sales 降序
+                high_b2b_asins = high_b2b_asins.sort_values('B2B Sales', ascending=False)
+
+                # 選擇要顯示的欄位
+                display_columns = ['Child ASIN']
+                if 'Title' in high_b2b_asins.columns:
+                    display_columns.append('Title')
+                display_columns.extend(['B2B Sales', 'B2B %', 'Ordered Product Sales'])
+
+                # 顯示表格
+                st.dataframe(
+                    high_b2b_asins[display_columns],
+                    use_container_width=True,
+                    hide_index=True
+                )
+            else:
+                st.info("雖然整體 B2B 佔比 > 5%，但沒有單一 ASIN 的 B2B% > 5%")
+
+            st.markdown("<div style='margin: 20px 0;'></div>", unsafe_allow_html=True)
+
     # 兩個widget
     col1, col2 = st.columns(2)
 
@@ -1121,8 +1253,270 @@ if "Asin Report" in loaded_data:
             st.markdown("---")
             st.markdown("**完整 ASIN 資料:**")
 
+            # === ASIN 標記工具 (MVP) ===
+            import json
+            from pathlib import Path
+
+            # 載入已儲存的標記
+            marks_file = Path("uploaded_data/asin_marks.json")
+            if 'asin_marks' not in st.session_state:
+                if marks_file.exists():
+                    with open(marks_file, 'r', encoding='utf-8') as f:
+                        st.session_state.asin_marks = json.load(f)
+                else:
+                    st.session_state.asin_marks = {}
+
+            # 載入已儲存的自定義 Tag 清單
+            tags_file = Path("uploaded_data/asin_tags_config.json")
+            if 'asin_tags_config' not in st.session_state:
+                if tags_file.exists():
+                    with open(tags_file, 'r', encoding='utf-8') as f:
+                        st.session_state.asin_tags_config = json.load(f)
+                else:
+                    # 預設 Tag 清單
+                    st.session_state.asin_tags_config = [
+                        "🔴 重點關注",
+                        "🟡 待優化",
+                        "🟢 表現良好",
+                        "🔵 新品"
+                    ]
+
+            # 添加 expander 背景樣式
+            st.markdown("""
+                <style>
+                /* 未展開時的標題列背景 */
+                div[data-testid="stExpander"] details summary {
+                    background-color: #f5f5f5;
+                    border-radius: 5px;
+                    padding: 10px;
+                }
+                /* 展開後標題列背景（上半部圓角） */
+                div[data-testid="stExpander"] details[open] summary {
+                    background-color: #f5f5f5;
+                    border-radius: 5px 5px 0 0;
+                    padding: 10px;
+                }
+                /* 展開後的內容區域背景（白色） */
+                div[data-testid="stExpander"] details[open] > div:not(summary) {
+                    background-color: white;
+                    padding: 15px;
+                    border-radius: 0 0 5px 5px;
+                }
+                </style>
+            """, unsafe_allow_html=True)
+
+            # 標記工具 UI
+            with st.expander("⚙️ ASIN 設定與標記", expanded=False):
+
+                # ===== ASIN 標記區塊 =====
+                with st.expander("🏷️ ASIN 標記", expanded=False):
+
+                    # 管理 Tag 子區塊
+                    st.markdown("**➕ 新增 Tag**")
+                    tag_col1, tag_col2 = st.columns([3, 1])
+                    with tag_col1:
+                        new_tag_name = st.text_input(
+                            "輸入 Tag 名稱",
+                            key="new_tag_name_input",
+                            placeholder="例如: 🟣 高優先級、⭐ 明星商品"
+                        )
+                    with tag_col2:
+                        st.markdown("<div style='margin-bottom: 8px;'>&nbsp;</div>", unsafe_allow_html=True)
+                        if st.button("新增", key="add_new_tag"):
+                            if new_tag_name and new_tag_name.strip():
+                                if new_tag_name not in st.session_state.asin_tags_config:
+                                    st.session_state.asin_tags_config.append(new_tag_name)
+                                    # 自動儲存
+                                    with open(tags_file, 'w', encoding='utf-8') as f:
+                                        json.dump(st.session_state.asin_tags_config, f, ensure_ascii=False, indent=2)
+                                    st.success(f"已新增 Tag: {new_tag_name}")
+                                    st.rerun()
+                                else:
+                                    st.warning("此 Tag 已存在")
+                            else:
+                                st.warning("請輸入 Tag 名稱")
+
+                    st.markdown("---")
+                    st.markdown("**目前的 Tag 清單**")
+
+                    if st.session_state.asin_tags_config:
+                        for idx, tag in enumerate(st.session_state.asin_tags_config):
+                            col1, col2 = st.columns([4, 1])
+                            with col1:
+                                st.text(tag)
+                            with col2:
+                                if st.button("刪除", key=f"delete_tag_{idx}"):
+                                    # 刪除 Tag
+                                    st.session_state.asin_tags_config.remove(tag)
+                                    # 同時清除所有使用此 Tag 的 ASIN 標記
+                                    asins_to_remove = [asin for asin, label in st.session_state.asin_marks.items() if label == tag]
+                                    for asin in asins_to_remove:
+                                        del st.session_state.asin_marks[asin]
+                                    # 儲存
+                                    with open(tags_file, 'w', encoding='utf-8') as f:
+                                        json.dump(st.session_state.asin_tags_config, f, ensure_ascii=False, indent=2)
+                                    with open(marks_file, 'w', encoding='utf-8') as f:
+                                        json.dump(st.session_state.asin_marks, f, ensure_ascii=False, indent=2)
+                                    st.success(f"已刪除 Tag: {tag}")
+                                    st.rerun()
+                    else:
+                        st.info("目前沒有 Tag，請新增")
+
+                    if st.button("重置為預設 Tag", key="reset_tags"):
+                        st.session_state.asin_tags_config = [
+                            "🔴 重點關注",
+                            "🟡 待優化",
+                            "🟢 表現良好",
+                            "🔵 新品"
+                        ]
+                        with open(tags_file, 'w', encoding='utf-8') as f:
+                            json.dump(st.session_state.asin_tags_config, f, ensure_ascii=False, indent=2)
+                        st.success("已重置為預設 Tag")
+                        st.rerun()
+
+                    st.markdown("---")
+
+                    # 標記 ASIN 子區塊
+                    st.markdown("**✏️ 標記 ASIN**")
+                    col_a, col_b, col_c = st.columns([4, 3, 2])
+                    with col_a:
+                        mark_asin = st.text_input("輸入 ASIN", key="mark_asin_input", placeholder="例如: B0DNK675T9")
+                    with col_b:
+                        # 動態讀取 Tag 清單
+                        tag_options = ["無"] + st.session_state.asin_tags_config
+                        mark_label = st.selectbox("Tag", tag_options, key="mark_label")
+                    with col_c:
+                        # 添加空白標籤來對齊按鈕
+                        st.markdown("<div style='margin-bottom: 8px;'>&nbsp;</div>", unsafe_allow_html=True)
+                        btn_col1, btn_col2 = st.columns([1, 1])
+                        with btn_col1:
+                            if st.button("套用", key="apply_mark"):
+                                if mark_asin:
+                                    if mark_label == "無":
+                                        # 移除標記
+                                        if mark_asin in st.session_state.asin_marks:
+                                            del st.session_state.asin_marks[mark_asin]
+                                    else:
+                                        # 新增/更新標記
+                                        st.session_state.asin_marks[mark_asin] = mark_label
+                                    # 自動儲存
+                                    with open(marks_file, 'w', encoding='utf-8') as f:
+                                        json.dump(st.session_state.asin_marks, f, ensure_ascii=False, indent=2)
+                                    st.success(f"已標記 {mark_asin}")
+                                    st.rerun()
+                        with btn_col2:
+                            if st.button("清空", key="clear_all_marks"):
+                                st.session_state.asin_marks = {}
+                                if marks_file.exists():
+                                    marks_file.unlink()
+                                st.success("已清空所有標記")
+                                st.rerun()
+
+                    # 顯示目前的標記
+                    if st.session_state.asin_marks:
+                        st.markdown("**目前標記：**")
+                        for asin, label in st.session_state.asin_marks.items():
+                            st.text(f"{label} {asin}")
+
+                # ===== 顯示設定區塊 =====
+                with st.expander("📊 顯示設定", expanded=False):
+                    st.markdown("**選擇要顯示的欄位群組**")
+
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        show_b2b = st.checkbox("🏢 B2B 數據", value=False, key="show_b2b_columns")
+                        show_comparison = st.checkbox("📈 同期比較", value=True, key="show_comparison_columns")
+                    with col2:
+                        show_inventory = st.checkbox("📦 庫存資訊", value=True, key="show_inventory_columns")
+                        show_percentage = st.checkbox("📊 變化百分比", value=True, key="show_percentage_columns")
+
+                    st.info("💡 取消勾選的欄位群組將在下方表格中隱藏")
+
             # 顯示所有欄位的完整資料
             display_df = asin_df.copy()
+
+            # 新增分類欄位：根據 Sessions 和 CVR 與中位數的比較
+            def classify_asin(row):
+                """根據 Sessions 和 CVR 與中位數比較，進行分類"""
+                # 取得該列的 Sessions 和 CVR
+                row_sessions = row.get('Sessions - Total', None)
+                row_cvr = row.get('Unit Session Percentage', None)
+
+                # 處理 CVR（移除 % 符號）
+                if pd.notna(row_cvr):
+                    try:
+                        row_cvr = float(str(row_cvr).replace('%', '').strip())
+                    except:
+                        row_cvr = None
+
+                # 檢查數據是否有效
+                if pd.isna(row_sessions) or row_sessions == 0 or pd.isna(row_cvr) or row_cvr == 0:
+                    return "-"
+
+                # 與中位數比較
+                sessions_high = row_sessions > session_median
+                cvr_high = row_cvr > cvr_median
+
+                # 分類邏輯
+                if sessions_high and cvr_high:
+                    return "高流量高轉化"
+                elif sessions_high and not cvr_high:
+                    return "高流量低轉化"
+                elif not sessions_high and cvr_high:
+                    return "低流量高轉化"
+                else:
+                    return "低流量低轉化"
+
+            # 應用分類函數
+            display_df.insert(1, 'Performance', display_df.apply(classify_asin, axis=1))
+
+            # 新增標記欄位
+            if st.session_state.asin_marks:
+                display_df.insert(2, 'Tag', display_df['Child ASIN'].map(st.session_state.asin_marks).fillna('-'))
+
+            # 如果有 Sales Contribution % 欄位，按照貢獻度排序（在重命名之前）
+            contribution_col = 'Sales Contribution %'
+            if contribution_col in display_df.columns:
+                # 創建一個用於排序的數值欄位
+                display_df['_sort_value'] = display_df['Sales Contribution %'].apply(
+                    lambda x: float(str(x).replace('%', '').strip()) if pd.notna(x) else 0
+                )
+                # 排序（由高到低）
+                display_df = display_df.sort_values('_sort_value', ascending=False)
+                # 移除排序用的欄位
+                display_df = display_df.drop(columns=['_sort_value'])
+
+            # ===== 根據顯示設定過濾欄位 =====
+            columns_to_remove = []
+
+            # B2B 數據
+            if not st.session_state.get('show_b2b_columns', True):
+                b2b_columns = ['B2B Sales', 'B2B %']
+                columns_to_remove.extend([col for col in b2b_columns if col in display_df.columns])
+
+            # 同期比較
+            if not st.session_state.get('show_comparison_columns', True):
+                comparison_columns = [
+                    'Ordered Product Sales - Prior Period', 'Ordered Product Sales - Last Year',
+                    'Sessions - Total - Prior Period', 'Sessions - Total - Last Year',
+                    'Total Order Items - Prior Period', 'Total Order Items - Last Year',
+                    'Unit Session % - Prior Period', 'Unit Session % - Last Year'
+                ]
+                columns_to_remove.extend([col for col in comparison_columns if col in display_df.columns])
+
+            # 庫存資訊
+            if not st.session_state.get('show_inventory_columns', True):
+                inventory_columns = ['Available', 'Total Days of Supply', 'WOC']
+                columns_to_remove.extend([col for col in inventory_columns if col in display_df.columns])
+
+            # 變化百分比
+            if not st.session_state.get('show_percentage_columns', True):
+                percentage_columns = ['MoM', 'YoY']
+                columns_to_remove.extend([col for col in percentage_columns if col in display_df.columns])
+
+            # 移除欄位
+            if columns_to_remove:
+                display_df = display_df.drop(columns=columns_to_remove, errors='ignore')
 
             # 重新命名欄位標題
             column_rename_map = {
@@ -1143,18 +1537,6 @@ if "Asin Report" in loaded_data:
                 # 'Original Column Name': 'New Display Name',
             }
             display_df = display_df.rename(columns=column_rename_map)
-
-            # 如果有 Sales Contribution % 欄位，按照貢獻度排序
-            contribution_col = 'Sales Contribution %'
-            if contribution_col in display_df.columns:
-                # 創建一個用於排序的數值欄位
-                display_df['_sort_value'] = display_df['Sales Contribution %'].apply(
-                    lambda x: float(str(x).replace('%', '').strip()) if pd.notna(x) else 0
-                )
-                # 排序（由高到低）
-                display_df = display_df.sort_values('_sort_value', ascending=False)
-                # 移除排序用的欄位
-                display_df = display_df.drop(columns=['_sort_value'])
 
             # 重設索引，從1開始編號
             display_df = display_df.reset_index(drop=True)
@@ -1555,7 +1937,114 @@ if "P0 MCID MBR" in loaded_data:
         )
         render_kpi_widget("SP ops", round(sp_ops_value) if isinstance(sp_ops_value, (int, float)) else sp_ops_value, sp_ops_yoy, sp_ops_mom, prefix="$")
 
-    # 折線圖區塊
+    # TACOS 折線圖 (2024 vs 2025)
+    with st.container():
+        st.markdown("<div style='margin-top: 30px; margin-bottom: 30px;'></div>", unsafe_allow_html=True)
+
+        if 'mtd_ord_gms' in cid_filtered_df.columns and 'mtd_sa_revenue_usd' in cid_filtered_df.columns:
+            import plotly.graph_objects as go
+
+            # 準備數據：按年和月分組並計算 TACOS
+            if 'calendar_year' in cid_filtered_df.columns and 'calendar_month' in cid_filtered_df.columns:
+                tacos_df_chart = cid_filtered_df.copy()
+
+                # 按年份和月份分組
+                grouped_tacos = tacos_df_chart.groupby(['calendar_year', 'calendar_month']).agg({
+                    'mtd_ord_gms': 'sum',
+                    'mtd_sa_revenue_usd': 'sum'
+                }).reset_index()
+
+                # 計算 TACOS (%)
+                grouped_tacos['tacos'] = (grouped_tacos['mtd_sa_revenue_usd'] / grouped_tacos['mtd_ord_gms'] * 100).fillna(0)
+
+                # 獲取所有可用的年份
+                available_years = sorted(grouped_tacos['calendar_year'].unique())
+
+                if len(available_years) >= 1:
+                    # 月份對應
+                    months_map = {1: 'Jan', 2: 'Feb', 3: 'Mar', 4: 'Apr', 5: 'May', 6: 'Jun',
+                                  7: 'Jul', 8: 'Aug', 9: 'Sep', 10: 'Oct', 11: 'Nov', 12: 'Dec'}
+                    month_order = list(months_map.values())
+
+                    # 準備繪圖數據
+                    plot_data = []
+                    for month_num, month_name in months_map.items():
+                        row_data = {'Month': month_name}
+                        for year in available_years:
+                            year_month_data = grouped_tacos[
+                                (grouped_tacos['calendar_year'] == year) &
+                                (grouped_tacos['calendar_month'] == month_num)
+                            ]
+                            if not year_month_data.empty:
+                                row_data[str(int(year))] = year_month_data['tacos'].iloc[0]
+                            else:
+                                row_data[str(int(year))] = None
+                        plot_data.append(row_data)
+
+                    plot_df = pd.DataFrame(plot_data)
+
+                    # 創建圖表
+                    fig_tacos = go.Figure()
+
+                    # 與 Business Metrics Trends 保持一致的顏色配置（使用 Plotly 默認顏色順序）
+                    latest_year = available_years[-1]  # 最新年份
+                    last_year = available_years[-2] if len(available_years) >= 2 else None  # 前一年
+
+                    # 先添加最新年份
+                    latest_year_str = str(int(latest_year))
+                    if latest_year_str in plot_df.columns:
+                        fig_tacos.add_trace(go.Scatter(
+                            x=plot_df['Month'],
+                            y=plot_df[latest_year_str],
+                            name=latest_year_str,
+                            mode='lines+markers'
+                        ))
+
+                    # 再添加前一年
+                    if last_year is not None:
+                        last_year_str = str(int(last_year))
+                        if last_year_str in plot_df.columns:
+                            fig_tacos.add_trace(go.Scatter(
+                                x=plot_df['Month'],
+                                y=plot_df[last_year_str],
+                                name=last_year_str,
+                                mode='lines+markers'
+                            ))
+
+                    # 如果有更多年份
+                    if len(available_years) > 2:
+                        for year in available_years[:-2]:
+                            year_str = str(int(year))
+                            if year_str in plot_df.columns:
+                                fig_tacos.add_trace(go.Scatter(
+                                    x=plot_df['Month'],
+                                    y=plot_df[year_str],
+                                    name=year_str,
+                                    mode='lines+markers'
+                                ))
+
+                    # 設置布局
+                    fig_tacos.update_layout(
+                        title="TACOS Trend (YoY Comparison)",
+                        xaxis_title="Month",
+                        yaxis_title="TACOS (%)",
+                        hovermode='x unified',
+                        legend=dict(
+                            orientation="h",
+                            yanchor="bottom",
+                            y=1.02,
+                            xanchor="right",
+                            x=1,
+                            title_text='Year'
+                        ),
+                        height=350,
+                        yaxis=dict(separatethousands=True),
+                        margin=dict(l=40, r=40, t=40, b=40)
+                    )
+
+                    st.plotly_chart(fig_tacos, use_container_width=True)
+
+    # Revenue & Ads Spending 折線圖
     with st.container():
         st.markdown("<div style='margin-top: 30px; margin-bottom: 30px;'></div>", unsafe_allow_html=True)
 

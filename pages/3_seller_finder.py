@@ -30,7 +30,7 @@ def create_filters(df):
                     filters[field] = selected
 
     # GMS 分類
-    st.sidebar.subheader("💰 GMS")
+    st.sidebar.subheader("💰 YTD GMS")
     if 'ytd_ord_gms' in df.columns:
         ytd_gms_data = df['ytd_ord_gms'].dropna()
         if not ytd_gms_data.empty:
@@ -57,6 +57,35 @@ def create_filters(df):
 
             if min_gms_input != default_min_gms or max_gms_input != default_max_gms:
                 filters['ytd_ord_gms'] = (min_gms_input, max_gms_input)
+
+    # MTD GMS 分類
+    st.sidebar.subheader("💰 MTD GMS")
+    if 'mtd_ord_gms' in df.columns:
+        mtd_gms_data = df['mtd_ord_gms'].dropna()
+        if not mtd_gms_data.empty:
+            default_min_mtd_gms = max(0, int(mtd_gms_data.min()))
+            default_max_mtd_gms = max(0, int(mtd_gms_data.max()))
+
+            col1, col2 = st.sidebar.columns(2)
+            with col1:
+                min_mtd_gms_input = st.number_input(
+                    "最小值",
+                    min_value=0,
+                    value=default_min_mtd_gms,
+                    step=1000,
+                    key="mtd_gms_min"
+                )
+            with col2:
+                max_mtd_gms_input = st.number_input(
+                    "最大值",
+                    min_value=0,
+                    value=default_max_mtd_gms,
+                    step=1000,
+                    key="mtd_gms_max"
+                )
+
+            if min_mtd_gms_input != default_min_mtd_gms or max_mtd_gms_input != default_max_mtd_gms:
+                filters['mtd_ord_gms'] = (min_mtd_gms_input, max_mtd_gms_input)
 
     # Ads 分類
     st.sidebar.subheader("📢 Ads")
@@ -113,40 +142,40 @@ def create_filters(df):
     if 'mtd_new_fba_ba_90d' in df.columns:
         new_ba_percentile = st.sidebar.selectbox(
             "New BA Percentile",
-            options=[None, 50, 75, 90],
-            format_func=lambda x: "All" if x is None else f"Top {x}%",
+            options=[None, 90, 75, 50, 25],
+            format_func=lambda x: "All" if x is None else f"P{x}",
             key="new_ba_percentile"
         )
         if new_ba_percentile:
             new_ba_data = df['mtd_new_fba_ba_90d'].dropna()
             if not new_ba_data.empty:
-                percentile_value = new_ba_data.quantile((100 - new_ba_percentile) / 100)
+                percentile_value = new_ba_data.quantile(new_ba_percentile / 100)
                 filters['mtd_new_fba_ba_90d_percentile'] = (percentile_value, float('inf'))
 
     # BA Percentile
     if 'mtd_fba_ba' in df.columns:
         ba_percentile = st.sidebar.selectbox(
             "BA Percentile",
-            options=[None, 50, 75, 90],
-            format_func=lambda x: "All" if x is None else f"Top {x}%",
+            options=[None, 90, 75, 50, 25],
+            format_func=lambda x: "All" if x is None else f"P{x}",
             key="ba_percentile"
         )
         if ba_percentile:
             ba_data = df['mtd_fba_ba'].dropna()
             if not ba_data.empty:
-                percentile_value = ba_data.quantile((100 - ba_percentile) / 100)
+                percentile_value = ba_data.quantile(ba_percentile / 100)
                 filters['mtd_fba_ba_percentile'] = (percentile_value, float('inf'))
 
-    # New BA/AWAS%
+    # New AWAS/BA %
     if 'mtd_new_fba_ba_90d' in df.columns and 'mtd_fba_awas' in df.columns:
         new_ba_awas_filter = st.sidebar.selectbox(
-            "New BA/AWAS% Filter",
+            "New AWAS/BA %",
             options=[None, "Greater than", "Less than", "Equal to"],
             key="new_ba_awas_filter_type"
         )
         if new_ba_awas_filter:
             threshold = st.sidebar.number_input(
-                "New BA/AWAS% Threshold",
+                "New AWAS/BA % Threshold",
                 min_value=0.0,
                 max_value=100.0,
                 value=10.0,
@@ -155,16 +184,16 @@ def create_filters(df):
             )
             filters['new_ba_awas_ratio'] = (new_ba_awas_filter, threshold)
 
-    # BA/AWAS%
+    # AWAS/BA %
     if 'mtd_fba_ba' in df.columns and 'mtd_fba_awas' in df.columns:
         ba_awas_filter = st.sidebar.selectbox(
-            "BA/AWAS% Filter",
+            "AWAS/BA %",
             options=[None, "Greater than", "Less than", "Equal to"],
             key="ba_awas_filter_type"
         )
         if ba_awas_filter:
             threshold = st.sidebar.number_input(
-                "BA/AWAS% Threshold",
+                "AWAS/BA % Threshold",
                 min_value=0.0,
                 max_value=100.0,
                 value=10.0,
@@ -213,45 +242,59 @@ def apply_filters(df, filters):
                 ]
         elif col == 'new_ba_awas_ratio':
             # 處理 New BA/AWAS 比率篩選
-            if values and 'mtd_new_fba_ba_90d' in filtered_df.columns and 'mtd_fba_awas' in filtered_df.columns:
+            if values:
                 filter_type, threshold = values
                 threshold_decimal = threshold / 100
 
+                # 優先使用 New_AWAS_BA_% 欄位，如果沒有則計算
+                if 'New_AWAS_BA_%' in filtered_df.columns:
+                    ratio = filtered_df['New_AWAS_BA_%']
+                    valid_mask = ratio.notna()
+                elif 'mtd_new_fba_ba_90d' in filtered_df.columns and 'mtd_fba_awas' in filtered_df.columns:
+                    # 計算比率：New BA / AWAS
+                    # 避免除以零：只保留 AWAS > 0 的數據
+                    valid_mask = filtered_df['mtd_fba_awas'] > 0
+                    ratio = filtered_df['mtd_new_fba_ba_90d'] / filtered_df['mtd_fba_awas'].replace(0, float('nan'))
+                else:
+                    continue
+
                 if filter_type == "Greater than":
-                    filtered_df = filtered_df[
-                        filtered_df['mtd_new_fba_ba_90d'] > (filtered_df['mtd_fba_awas'] * threshold_decimal)
-                    ]
+                    filtered_df = filtered_df[valid_mask & (ratio > threshold_decimal)]
                 elif filter_type == "Less than":
-                    filtered_df = filtered_df[
-                        filtered_df['mtd_new_fba_ba_90d'] < (filtered_df['mtd_fba_awas'] * threshold_decimal)
-                    ]
+                    filtered_df = filtered_df[valid_mask & (ratio < threshold_decimal)]
                 elif filter_type == "Equal to":
                     # 使用相對誤差來判斷相等（考慮浮點數精度）
                     tolerance = 0.01  # 1% tolerance
-                    target = filtered_df['mtd_fba_awas'] * threshold_decimal
                     filtered_df = filtered_df[
-                        abs(filtered_df['mtd_new_fba_ba_90d'] - target) <= (target * tolerance)
+                        valid_mask & (abs(ratio - threshold_decimal) <= threshold_decimal * tolerance)
                     ]
         elif col == 'ba_awas_ratio':
             # 處理 BA/AWAS 比率篩選
-            if values and 'mtd_fba_ba' in filtered_df.columns and 'mtd_fba_awas' in filtered_df.columns:
+            if values:
                 filter_type, threshold = values
                 threshold_decimal = threshold / 100
 
+                # 優先使用 AWAS_BA_% 欄位，如果沒有則計算
+                if 'AWAS_BA_%' in filtered_df.columns:
+                    ratio = filtered_df['AWAS_BA_%']
+                    valid_mask = ratio.notna()
+                elif 'mtd_fba_ba' in filtered_df.columns and 'mtd_fba_awas' in filtered_df.columns:
+                    # 計算比率：BA / AWAS
+                    # 避免除以零：只保留 AWAS > 0 的數據
+                    valid_mask = filtered_df['mtd_fba_awas'] > 0
+                    ratio = filtered_df['mtd_fba_ba'] / filtered_df['mtd_fba_awas'].replace(0, float('nan'))
+                else:
+                    continue
+
                 if filter_type == "Greater than":
-                    filtered_df = filtered_df[
-                        filtered_df['mtd_fba_ba'] > (filtered_df['mtd_fba_awas'] * threshold_decimal)
-                    ]
+                    filtered_df = filtered_df[valid_mask & (ratio > threshold_decimal)]
                 elif filter_type == "Less than":
-                    filtered_df = filtered_df[
-                        filtered_df['mtd_fba_ba'] < (filtered_df['mtd_fba_awas'] * threshold_decimal)
-                    ]
+                    filtered_df = filtered_df[valid_mask & (ratio < threshold_decimal)]
                 elif filter_type == "Equal to":
                     # 使用相對誤差來判斷相等（考慮浮點數精度）
                     tolerance = 0.01  # 1% tolerance
-                    target = filtered_df['mtd_fba_awas'] * threshold_decimal
                     filtered_df = filtered_df[
-                        abs(filtered_df['mtd_fba_ba'] - target) <= (target * tolerance)
+                        valid_mask & (abs(ratio - threshold_decimal) <= threshold_decimal * tolerance)
                     ]
         elif col in filtered_df.columns:
             # 處理一般欄位篩選

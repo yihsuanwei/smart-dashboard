@@ -177,17 +177,21 @@ smart_dashboard_20251011/
 2. **篩選客戶**：
    - 輸入 Merchant Customer ID（支援多個 ID，逗號分隔）
    - 選擇 Marketplace ID（可多選）
+   - 選擇 Calendar Year（可多選）- 僅影響表格數據
+   - 選擇 Calendar Month（可多選）- 僅影響表格數據
 
 3. **數據預覽**：
    - 自訂顯示欄位（預設顯示：year, month, CID, merchant_name, opportunity_owner, ytd/mtd/wtd_ord_gms）
    - 顯示前 100 筆數據
    - 支援按 `mtd_new_fba_ba_90d` 排序
+   - **Year/Month 篩選**：只影響表格顯示，不影響下方趨勢圖
 
 4. **趨勢圖表**：
    - 選擇要顯示的業務指標（支援多選）
    - 年份控制：可選擇顯示 2024、2025 或兩者對比
    - 每行顯示 2 個圖表，自動排版
    - 支援所有數值型欄位的趨勢分析
+   - **智能數據分離**：圖表不受 Year/Month 篩選影響，保持完整趨勢
 
 ### 🔍 Seller Finder 使用流程
 
@@ -202,10 +206,18 @@ smart_dashboard_20251011/
      - MTD TACoS (%) 範圍（最小值/最大值輸入）
      - YTD SP Adopt、MTD SP Active Seller
    - **🎯 Selection Funnel**：
-     - New BA Percentile（Top 50%/75%/90%）
-     - BA Percentile（Top 50%/75%/90%）
-     - New BA/AWAS% Filter（Greater than/Less than/Equal to + 閾值）
-     - BA/AWAS% Filter（Greater than/Less than/Equal to + 閾值）
+     - **New BA Percentile**（P90/P75/P50/P25）- 標準統計學百分位數
+       - P90 = 贏過 90% 的人（保留前 10%）
+       - P75 = 贏過 75% 的人（保留前 25%）
+       - P50 = 中位數（保留前 50%）
+       - P25 = 贏過 25% 的人（保留前 75%）
+     - **BA Percentile**（P90/P75/P50/P25）- 標準統計學百分位數
+     - **New AWAS/BA %**（Greater than/Less than/Equal to + 閾值百分比）
+       - 計算比率：mtd_new_fba_ba_90d / mtd_fba_awas
+       - 優先使用 `New_AWAS_BA_%` 欄位（如果存在）
+     - **AWAS/BA %**（Greater than/Less than/Equal to + 閾值百分比）
+       - 計算比率：mtd_fba_ba / mtd_fba_awas
+       - 優先使用 `AWAS_BA_%` 欄位（如果存在）
    - **⚡ Feature Adoption**：is_brand_rep、ytd_pl_launch、is_aplus_adopt、vine_launch_90days、ytd_fba_adopt、ytd_coupon_adopt
 
 3. **查看統計分析**：
@@ -216,7 +228,7 @@ smart_dashboard_20251011/
    - **詳細統計表**：樣本數、平均值、P25/P50/P75、標準差、最小值/最大值
 
 4. **數據預覽與下載**：
-   - 自訂顯示欄位（預設顯示前 6 個重要欄位）
+   - 自訂顯示欄位（預設顯示前 6 個重要欄位：year, month, CID, merchant_name, opportunity_owner, ytd_ord_gms）
    - 支援 CID 搜尋（可輸入多個，逗號分隔）
    - 按 `mtd_new_fba_ba_90d` 排序，顯示前 100 筆
    - **下載篩選後的數據**（CSV 格式）
@@ -578,6 +590,77 @@ uploaded_data/                     # 數據存儲目錄
 ---
 
 ## 🆕 版本更新歷史
+
+### 版本 3.1.6 (2025-12-23)
+
+**📊 Performance Dashboard - B2B 數據分析**
+- **油猴腳本支援**：ASIN 報表新增 B2B Sales 和 B2B % 欄位（佔整體 GMS 百分比）
+- **Dashboard 智慧 B2B 警示**：僅在整體 B2B 佔比超過 5% 時觸發警告並顯示高佔比 ASIN 明細
+- **欄位顯示控制**：新增顯示設定功能，可選擇性隱藏 B2B 數據、同期比較、庫存資訊、變化百分比等欄位群組
+- **UI 優化**：「ASIN 標記工具」更名為「ASIN 設定與標記」，整合 Tag 管理和欄位顯示設定
+
+### 版本 3.1.5 (2025-11-27)
+
+**📈 Performance Dashboard**
+- 新增 TACOS Trend 折線圖，支援 2024 vs 2025 年度對比
+
+### 版本 3.1.4 (2025-11-17)
+
+**🔍 Seller Finder 篩選器優化**
+- **GMS 篩選器重新命名**：
+  - "💰 GMS" → "💰 YTD GMS"（更明確標示為 Year-to-Date 數據）
+- **新增 MTD GMS 篩選器**：
+  - 新增 "💰 MTD GMS" 篩選器，支援篩選 `mtd_ord_gms` 欄位
+  - 提供最小值/最大值範圍輸入，step 為 1000
+  - 與 YTD GMS 篩選器相同的操作邏輯
+
+**📋 篩選邏輯說明**
+- **AWAS/BA % 篩選行為**：
+  - 當選擇 AWAS/BA % 篩選時，會自動排除沒有數值的資料
+  - 只保留有效數值進行比較（NaN 和空值會被過濾）
+  - 適用於 New AWAS/BA % 和 AWAS/BA % 兩個篩選器
+
+### 版本 3.1.3 (2025-11-13)
+
+**📈 Metrics Tracker 篩選優化**
+- **新增篩選器**：Marketplace 底下加上 Calendar Year 和 Calendar Month 篩選
+- **智能數據分離**：Year/Month 篩選僅影響表格，趨勢圖表不受影響
+  - 表格：顯示篩選後的特定時段數據
+  - 圖表：保持完整 2024-2025 趨勢對比
+- **UI 優化**：移除冗餘的篩選提示訊息，介面更簡潔
+
+**🔍 Seller Finder 篩選邏輯修正**
+- **修正百分位數邏輯**：改用標準統計學定義
+  - P25 = 贏過 25% 的人（保留前 75%）
+  - P50 = 贏過 50% 的人（中位數）
+  - P75 = 贏過 75% 的人（保留前 25%）
+  - P90 = 贏過 90% 的人（保留前 10%）
+- **新增 P25 選項**：提供更多篩選彈性
+- **優化選項排序**：從 P90 → P75 → P50 → P25，由高到低排列
+
+**🎯 Selection Funnel 數字邏輯調整**
+- **修正 BA/AWAS 比率篩選邏輯**：改用正確的比例計算
+  - 原邏輯：比較絕對數值（錯誤）
+  - 新邏輯：比較比例 `(BA / AWAS)`（正確）
+- **優先使用現有欄位**：直接讀取 `New_AWAS_BA_%` 和 `AWAS_BA_%` 欄位
+- **篩選器重新命名**：更符合實際欄位名稱
+  - "New BA/AWAS% Filter" → "New AWAS/BA %"
+  - "BA/AWAS% Filter" → "AWAS/BA %"
+
+### 版本 3.1.2 (2025-11-11)
+
+**🏷️ ASIN 標記功能**
+- **新增 ASIN 標記工具**：在 Performance Dashboard 的 ASIN Level 區塊新增標記工具
+  - 支援自訂標記（🔴 重點關注、🟡 待優化、🟢 表現良好、🔵 新品）
+  - 自動儲存標記到 JSON 檔案，重新整理不會遺失
+  - 標記會顯示在完整 ASIN 資料表格的 Tag 欄位中
+  - 支援一鍵清空所有標記
+- **Performance 分類欄位**：自動根據 Sessions 和 CVR 與中位數比較分類 ASIN
+  - 高流量高轉化、高流量低轉化、低流量高轉化、低流量低轉化
+
+**🎨 UI/UX 優化**
+- ASIN 標記工具使用淺灰色背景，更清楚的視覺區隔
+- 優化按鈕排版和間距，提升操作體驗
 
 ### 版本 3.1.1 (2025-11-07)
 

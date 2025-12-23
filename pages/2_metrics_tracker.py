@@ -62,16 +62,43 @@ def show_customer_id_filter_tab(df, selected_file):
             )
 
     # -------------------------
-    # 🔹 根據 Customer ID 和 Marketplace ID 過濾數據
+    # 🔹 Calendar Year 篩選
+    # -------------------------
+    year_filter = None
+    if 'calendar_year' in df.columns:
+        available_years = sorted(df['calendar_year'].dropna().unique().tolist())
+        if available_years:
+            year_filter = st.multiselect(
+                "📅 選擇 Calendar Year",
+                options=available_years,
+                help="可選擇多個年份"
+            )
+
+    # -------------------------
+    # 🔹 Calendar Month 篩選
+    # -------------------------
+    month_filter = None
+    if 'calendar_month' in df.columns:
+        available_months = sorted(df['calendar_month'].dropna().unique().tolist())
+        if available_months:
+            month_filter = st.multiselect(
+                "📆 選擇 Calendar Month",
+                options=available_months,
+                help="可選擇多個月份"
+            )
+
+    # -------------------------
+    # 🔹 根據 Customer ID、Marketplace ID、Year 和 Month 過濾數據
     # -------------------------
     filtered_df = df.copy()
+    chart_df = df.copy()  # 用於圖表的數據，不受年月篩選影響
     has_filter_input = False
 
     if customer_input:
         ids = [x.strip() for x in customer_input.split(",") if x.strip()]
         if ids:
             filtered_df = filtered_df[filtered_df['merchant_customer_id'].astype(str).isin(ids)]
-            st.info(f"已篩選出 {len(filtered_df)} 筆資料，包含 {len(ids)} 個Customer ID")
+            chart_df = chart_df[chart_df['merchant_customer_id'].astype(str).isin(ids)]
             has_filter_input = True
         else:
             st.warning("請輸入有效的Customer ID")
@@ -79,7 +106,17 @@ def show_customer_id_filter_tab(df, selected_file):
     # 套用 Marketplace 篩選
     if marketplace_filter:
         filtered_df = filtered_df[filtered_df['marketplace_id'].isin(marketplace_filter)]
-        st.info(f"已篩選 Marketplace: {', '.join(map(str, marketplace_filter))}，剩餘 {len(filtered_df)} 筆資料")
+        chart_df = chart_df[chart_df['marketplace_id'].isin(marketplace_filter)]
+        has_filter_input = True
+
+    # 套用 Calendar Year 篩選（只套用到表格數據，不套用到圖表數據）
+    if year_filter:
+        filtered_df = filtered_df[filtered_df['calendar_year'].isin(year_filter)]
+        has_filter_input = True
+
+    # 套用 Calendar Month 篩選（只套用到表格數據，不套用到圖表數據）
+    if month_filter:
+        filtered_df = filtered_df[filtered_df['calendar_month'].isin(month_filter)]
         has_filter_input = True
 
     # 加入間距
@@ -148,11 +185,11 @@ def show_customer_id_filter_tab(df, selected_file):
         # -------------------------
         if not has_filter_input:
             st.info("💡 請輸入 Merchant Customer ID 或選擇 Marketplace ID 來查看圖表")
-        elif 'calendar_year' in filtered_df.columns and 'calendar_month' in filtered_df.columns:
+        elif 'calendar_year' in chart_df.columns and 'calendar_month' in chart_df.columns:
             st.subheader("📈 趨勢圖表")
 
             # 找出可繪圖的數值欄位
-            numeric_columns = filtered_df.select_dtypes(include=['int64', 'float64']).columns.tolist()
+            numeric_columns = chart_df.select_dtypes(include=['int64', 'float64']).columns.tolist()
             # 移除時間欄位
             numeric_columns = [col for col in numeric_columns if col not in ['calendar_year', 'calendar_month', 'reporting_year', 'reporting_week_of_year']]
 
@@ -188,13 +225,13 @@ def show_customer_id_filter_tab(df, selected_file):
                             chart_cols = st.columns(2)
 
                         for i, metric in enumerate(row_metrics):
-                            if metric in filtered_df.columns:
+                            if metric in chart_df.columns:
                                 with chart_cols[i]:
                                     fig = go.Figure()
 
                                     # 2025年資料
                                     if show_2025:
-                                        current_year_data = filtered_df[filtered_df['calendar_year'] == current_year]
+                                        current_year_data = chart_df[chart_df['calendar_year'] == current_year]
                                         if not current_year_data.empty:
                                             monthly_data = current_year_data[['calendar_month', metric]].dropna().sort_values('calendar_month')
                                             if not monthly_data.empty:
@@ -216,7 +253,7 @@ def show_customer_id_filter_tab(df, selected_file):
 
                                     # 2024年資料
                                     if show_2024:
-                                        last_year_data = filtered_df[filtered_df['calendar_year'] == current_year - 1]
+                                        last_year_data = chart_df[chart_df['calendar_year'] == current_year - 1]
                                         if not last_year_data.empty:
                                             monthly_data = last_year_data[['calendar_month', metric]].dropna().sort_values('calendar_month')
                                             if not monthly_data.empty:
