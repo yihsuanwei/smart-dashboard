@@ -542,6 +542,9 @@ if "Total Year Change" in loaded_data:
                 help_text=metric.get('help_text')
             )
 
+    # 增加 KPI widgets 與下方元素的間距
+    st.markdown("<div style='margin-bottom: 40px;'></div>", unsafe_allow_html=True)
+
     # 月度銷售趨勢圖 - 從 Sales Traffic Report 讀取
     if "Sales Traffic Report" in loaded_data:
 
@@ -590,7 +593,7 @@ if "Total Year Change" in loaded_data:
             # 排序年份
             sorted_years = sorted(year_columns.keys(), reverse=True)
 
-            # 年份選擇器 - 預設選擇最近三年，不顯示標題
+            # 年份選擇器 - 預設選擇最近三年
             selected_years = st.multiselect(
                 "Select Years",
                 options=sorted_years,
@@ -1026,19 +1029,27 @@ if "Total Year Change" in loaded_data:
                         # 未過的月份或沒有實際數據 → 用預估值（藍色）
                         elif last_sales and pd.notna(last_sales):
                             estimated = int(last_sales * (1 + target_yoy / 100))
-                            row_estimated[month] = f'<span style="color:#2196F3">${estimated:,}</span>'
+                            row_estimated[month] = f'<span style="color:#e57373">${estimated:,}</span>'
                             estimated_values.append(estimated)
                         else:
                             row_estimated[month] = '-'
                     
                     estimated_sum = sum(estimated_values) if estimated_values else 0
                     estimated_avg = sum(estimated_values) / len(estimated_values) if estimated_values else 0
-                    row_estimated['Sum'] = f'${estimated_sum:,}'
-                    row_estimated['Avg.'] = f'${int(estimated_avg):,}'
+                    
+                    # 判斷 Sum 和 Avg 是否包含預估值（如果有任何月份不在 actual_months 中，就是包含預估）
+                    has_estimated = len(actual_months) < len(all_months)
+                    if has_estimated:
+                        row_estimated['Sum'] = f'<span style="color:#e57373">${estimated_sum:,}</span>'
+                        row_estimated['Avg.'] = f'<span style="color:#e57373">${int(estimated_avg):,}</span>'
+                    else:
+                        row_estimated['Sum'] = f'${estimated_sum:,}'
+                        row_estimated['Avg.'] = f'${int(estimated_avg):,}'
                     target_rows.append(row_estimated)
 
                     # YoY（實際 + 預估混合）- 整數，不要小數
                     row_target_yoy_display = {'項目': 'YoY'}
+                    has_estimated_yoy = False
                     for month in all_months:
                         month_num = month_to_num[month]
                         actual_sales = this_year_sales.get(month)
@@ -1049,24 +1060,28 @@ if "Total Year Change" in loaded_data:
                         if month_num < current_month_num and actual_sales and pd.notna(actual_sales) and last_sales and pd.notna(last_sales) and last_sales != 0:
                             actual_yoy = ((actual_sales - last_sales) / last_sales) * 100
                             row_target_yoy_display[month] = f'{int(round(actual_yoy))}%'
-                        # 未過的月份 → 用目標 YoY（藍色）
+                        # 未過的月份 → 用目標 YoY（淺紅色）
                         else:
-                            row_target_yoy_display[month] = f'<span style="color:#2196F3">{int(round(target_yoy))}%</span>'
+                            row_target_yoy_display[month] = f'<span style="color:#e57373">{int(round(target_yoy))}%</span>'
+                            has_estimated_yoy = True
                     # YoY Sum = 用全年 Sum 計算，Avg 顯示 -
                     if last_year_sum and last_year_sum != 0:
                         yoy_sum_calculated = ((estimated_sum - last_year_sum) / last_year_sum) * 100
-                        row_target_yoy_display['Sum'] = f'{int(round(yoy_sum_calculated))}%'
+                        if has_estimated_yoy:
+                            row_target_yoy_display['Sum'] = f'<span style="color:#e57373">{int(round(yoy_sum_calculated))}%</span>'
+                        else:
+                            row_target_yoy_display['Sum'] = f'{int(round(yoy_sum_calculated))}%'
                     else:
                         row_target_yoy_display['Sum'] = '-'
                     row_target_yoy_display['Avg.'] = '-'
                     target_rows.append(row_target_yoy_display)
 
-                    # 用 HTML 表格顯示（支援藍色字體）
+                    # 用 HTML 表格顯示（支援顏色字體）
                     target_display_df = pd.DataFrame(target_rows)
                     
                     # 轉換為 HTML 表格
                     html_table = '<table style="width:100%; border-collapse:collapse; font-size:14px;">'
-                    html_table += '<thead><tr style="background-color:#f0f2f6;">'
+                    html_table += '<thead><tr style="background-color:#fff0f0;">'
                     for col in target_display_df.columns:
                         html_table += f'<th style="padding:8px; text-align:center; border-bottom:2px solid #ddd;">{col}</th>'
                     html_table += '</tr></thead><tbody>'
@@ -1084,15 +1099,15 @@ if "Total Year Change" in loaded_data:
                     # 全年 YoY 目標輸入 + 可編輯的月度 YoY
                     st.markdown("---")
 
-                    # 全年目標輸入
-                    col_input, col_spacer = st.columns([2, 4])
+                    # 全年目標輸入（縮小欄位）
+                    col_input, col_spacer = st.columns([1, 5])
                     with col_input:
                         annual_yoy_target = st.number_input(
                             f"目標 % (user input)",
-                            min_value=0.0,  # 目標 YoY 不可為負
-                            max_value=500.0,
-                            value=max(0.0, st.session_state[annual_target_key]),  # 確保不為負
-                            step=1.0,
+                            min_value=0,  # 目標 YoY 不可為負
+                            max_value=500,
+                            value=max(0, int(st.session_state[annual_target_key])),  # 確保不為負，整數
+                            step=1,
                             key=f"annual_yoy_input_{this_year}",
                             help="輸入全年 YoY 目標後，系統會智能分配到各月份"
                         )
@@ -1118,13 +1133,25 @@ if "Total Year Change" in loaded_data:
                     }
                     for month in all_months:
                         editable_column_config[month] = st.column_config.NumberColumn(
-                            month,
+                            f'✏️ {month}',
                             min_value=0,  # 目標 YoY 不可為負
                             max_value=500,
                             step=1,  # 整數步進
                             format='%d',  # 整數格式
                             width='small'
                         )
+
+                    # 讓數字靠左對齊的 CSS
+                    st.markdown("""
+                    <style>
+                        [data-testid="stDataEditor"] td {
+                            text-align: left !important;
+                        }
+                        [data-testid="stDataEditor"] input {
+                            text-align: left !important;
+                        }
+                    </style>
+                    """, unsafe_allow_html=True)
 
                     edited_df = st.data_editor(
                         editable_df,
@@ -1140,13 +1167,35 @@ if "Total Year Change" in loaded_data:
                     for month in all_months:
                         edited_targets[month] = int(round(edited_df[month].iloc[0]))
 
-                    # 按鈕區域（放在變更檢測之前，確保按鈕可以被點擊）
-                    col_save, col_undo, col_reset, col_spacer = st.columns([1, 1, 1, 3])
+                    # 按鈕區域（三個按鈕靠右，平均間隔）
+                    btn_spacer, btn_col1, btn_col2, btn_col3 = st.columns([7, 1, 1, 1])
                     
                     button_clicked = False
 
-                    with col_save:
-                        if st.button("💾 Save", key=f"save_targets_{this_year}"):
+                    with btn_col1:
+                        undo_disabled = len(st.session_state.get(undo_session_key, [])) == 0
+                        if st.button("Undo", key=f"undo_targets_{this_year}", disabled=undo_disabled, use_container_width=True):
+                            button_clicked = True
+                            if st.session_state[undo_session_key]:
+                                previous_state = st.session_state[undo_session_key].pop()
+                                st.session_state[target_session_key] = previous_state
+                                st.rerun()
+
+                    with btn_col2:
+                        if st.button("🪄 Reallocate", key=f"reset_targets_{this_year}", use_container_width=True):
+                            button_clicked = True
+                            st.session_state[undo_session_key].append(current_targets.copy())
+                            new_targets = smart_allocate(annual_yoy_target, last_year_sales, last_year_yoy)
+                            st.session_state[target_session_key] = new_targets
+
+                            if current_file_key in all_targets and str(this_year) in all_targets[current_file_key]:
+                                del all_targets[current_file_key][str(this_year)]
+                                save_targets(all_targets)
+
+                            st.rerun()
+
+                    with btn_col3:
+                        if st.button("Save Changes", key=f"save_targets_{this_year}", type="primary", use_container_width=True):
                             button_clicked = True
                             if current_file_key not in all_targets:
                                 all_targets[current_file_key] = {}
@@ -1173,28 +1222,6 @@ if "Total Year Change" in loaded_data:
 
                             save_targets(all_targets)
                             st.success("✅ Saved!")
-
-                    with col_undo:
-                        undo_disabled = len(st.session_state.get(undo_session_key, [])) == 0
-                        if st.button("↩️ Undo", key=f"undo_targets_{this_year}", disabled=undo_disabled):
-                            button_clicked = True
-                            if st.session_state[undo_session_key]:
-                                previous_state = st.session_state[undo_session_key].pop()
-                                st.session_state[target_session_key] = previous_state
-                                st.rerun()
-
-                    with col_reset:
-                        if st.button("🔄 Reallocate", key=f"reset_targets_{this_year}"):
-                            button_clicked = True
-                            st.session_state[undo_session_key].append(current_targets.copy())
-                            new_targets = smart_allocate(annual_yoy_target, last_year_sales, last_year_yoy)
-                            st.session_state[target_session_key] = new_targets
-
-                            if current_file_key in all_targets and str(this_year) in all_targets[current_file_key]:
-                                del all_targets[current_file_key][str(this_year)]
-                                save_targets(all_targets)
-
-                            st.rerun()
 
                     # 檢查是否有變更（只有在沒有按鈕被點擊時才處理）
                     if not button_clicked:

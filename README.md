@@ -4,7 +4,7 @@
 
 ## 🎯 功能特色
 
-✅ **多檔案類型支援** - 支援 5 種業務檔案類型分類管理（P0 MCID MBR、Sales Traffic Report、Total Year Change、Month YoY、Asin Report）
+✅ **多檔案類型支援** - 支援 6 種業務檔案類型分類管理（P0 MCID MBR、Sales Traffic Report、Total Year Change、Month YoY、Asin Report、ASIN Trend (YTD)）
 ✅ **智能檔案分類** - 自動分類存儲不同類型的業務數據
 ✅ **綜合分析儀表板** - Performance Dashboard 多維度績效分析（銷售、廣告、ASIN）
 ✅ **客戶指標追蹤** - Metrics Tracker 支援多年度趨勢對比與自訂指標
@@ -45,22 +45,23 @@
 1. **解壓縮**專案檔案到任意目錄（建議桌面）
 2. **確認檔案結構**：
 ```
-smart_dashboard_20251011/
+smart_dashboard_20260112/
 ├── upload.py             # 主程式（資料處理中心）
 ├── setup.bat             # 安裝腳本
 ├── start.bat             # 啟動腳本
 ├── requirements.txt      # 套件清單
 ├── utils.py              # 工具函數
 ├── pages/                # 分析頁面
-│   ├── quick_glance.py          # 快速瀏覽分析
-│   ├── performance_review.py    # 績效評估
-│   └── multi_file_analysis.py   # 多檔案整合分析
+│   ├── 1_performance_dashboard.py   # Performance Dashboard（多檔案整合分析）
+│   ├── 2_metrics_tracker.py         # Metrics Tracker（客戶指標追蹤）
+│   └── 3_seller_finder.py           # Seller Finder（賣家查找與篩選）
 └── uploaded_data/        # 分類上傳檔案目錄
     ├── p0_mcid_mbr/             # P0 MCID MBR 檔案
     ├── sales_traffic_report/    # 銷售流量報告
     ├── total_year_change/       # 年度變化數據
     ├── month_yoy/               # 月度同比數據
-    └── asin_report/             # 商品層級報告
+    ├── asin_report/             # 商品層級報告
+    └── asin_trend/              # ASIN 趨勢資料 (YTD)
 ```
 
 ### ⚙️ 步驟 3：安裝環境
@@ -106,6 +107,7 @@ smart_dashboard_20251011/
    - **Total Year Change** - 請對應 Raw data 檔名
    - **Month YoY** - 請對應 Raw data 檔名
    - **Asin Report** - 請對應 Raw data 檔名
+   - **ASIN Trend (YTD)** - ASIN 月度銷售趨勢資料
    
    提醒：一定要選擇正確、對應的檔案類型 
 3. 自訂檔名並選擇資料處理選項
@@ -117,15 +119,16 @@ smart_dashboard_20251011/
 
 **⚠️ 使用前準備：**
 1. **先前往「Upload」頁面上傳所需檔案**
-2. **確保已上傳 5 種不同類型的檔案**：
+2. **確保已上傳 6 種不同類型的檔案**：
    - Sales Traffic Report
    - Total Year Change
    - Month YoY
    - P0 MCID MBR
    - Asin Report
+   - ASIN Trend (YTD)（可選，用於 ASIN 趨勢分析）
 
 **📊 分析步驟：**
-1. **選擇多檔案**：從已上傳的檔案中選擇 5 種不同類型
+1. **選擇多檔案**：從已上傳的檔案中選擇 6 種不同類型
 
    💡 **Raw Data 下載準備**：使用 Tampermonkey 腳本下載原始數據
 
@@ -135,7 +138,7 @@ smart_dashboard_20251011/
    - Edge：前往 [Microsoft Edge Add-ons](https://microsoftedge.microsoft.com/addons) 搜尋「Tampermonkey」
 
    **📜 安裝數據下載腳本**：
-   - 📦 [Inventory ASIN Table Viewer](https://greasyfork.org/zh-TW/scripts/551928-inventory-asin-table-viewer)
+   - 📦 [Inventory ASIN Table Viewer](https://greasyfork.org/zh-TW/scripts/551928-inventory-asin-table-viewer)（含「📈 下載 ASIN 趨勢 (YTD)」按鈕）
    - 📊 [Sales Traffic Business Report Viewer](https://greasyfork.org/zh-TW/scripts/551929-sales-traffic-business-report-viewer)
    - 📈 [Sales Dashboard Viewer](https://greasyfork.org/zh-TW/scripts/551930-sales-dashboard-viewer)
 
@@ -144,8 +147,13 @@ smart_dashboard_20251011/
 
 2. **📈 Overall Sales Summary**：年度銷售概覽
    - 顯示 YTD Sales、Total Order Items、Units Ordered、Average sales/order item 等關鍵 KPI
-   - 月度銷售趨勢圖（This Year vs Last Year），支援 YoY 百分比顯示
-   - **可編輯表格**：可直接在表格中修改數據，輸入 YoY% 會自動計算 This Year Sales
+   - 月度銷售趨勢圖（多年度對比），支援選擇顯示年份
+   - **Actual 表格**：顯示實際銷售數據，YoY 正數綠字、負數紅字
+   - **Forecast 表格**：年度銷售預測
+     - 已過月份顯示實際數據（黑字），未來月份顯示預估數據（藍字）
+     - 輸入全年 YoY 目標，系統智能分配到各月份
+     - 支援手動調整各月份 YoY 目標
+     - Undo（撤銷）/ Reallocate（重新分配）按鈕
 
 3. **📊 Business Metrics**：業務指標分析
    - 選擇日期查看當月的 Sales、Total Order Items、Sessions、CVR、ASP 等指標
@@ -162,11 +170,16 @@ smart_dashboard_20251011/
 
 5. **📦 ASIN Level**：商品層級分析
    - Session 和 CVR 的中位數/平均數統計（含 YoY/MoM 變化）
-   - **ASIN 銷售貢獻圓餅圖**：顯示 Top 10 ASIN 的銷售貢獻百分比
-   - **完整 ASIN 資料表**：
-     - 顯示所有 ASIN 的詳細數據（Sales, Sessions, Orders, CVR 等）
-     - 支援熱力圖視覺化（不同指標使用不同顏色系統）
-     - 自動標示 WOC (Weeks of Coverage) 警示（≤4週顯示粉紅底紅字，>8週顯示紅字）
+   - **Tab 1 - ASIN 資料表**：
+     - **ASIN 銷售貢獻圓餅圖**：顯示 Top 10 ASIN 的銷售貢獻百分比
+     - **完整 ASIN 資料表**：
+       - 顯示所有 ASIN 的詳細數據（Sales, Sessions, Orders, CVR 等）
+       - 支援熱力圖視覺化（不同指標使用不同顏色系統）
+       - 自動標示 WOC (Weeks of Coverage) 警示（≤4週顯示粉紅底紅字，>8週顯示紅字）
+   - **Tab 2 - 趨勢分析**（需上傳 ASIN Trend (YTD) 檔案）：
+     - **ASIN 銷售趨勢圖**：預設顯示最新月份銷售前 3 名 ASIN
+     - 支援多選 ASIN 顯示趨勢對比
+     - **月度銷售資料表**：顯示各 ASIN 的月度銷售數據
 
 ### 📈 Metrics Tracker 使用流程
 
@@ -187,11 +200,12 @@ smart_dashboard_20251011/
    - **Year/Month 篩選**：只影響表格顯示，不影響下方趨勢圖
 
 4. **趨勢圖表**：
-   - 選擇要顯示的業務指標（支援多選）
+   - 選擇要顯示的業務指標（支援多選，不限數量）
    - 年份控制：可選擇顯示 2024、2025 或兩者對比
    - 每行顯示 2 個圖表，自動排版
    - 支援所有數值型欄位的趨勢分析
    - **智能數據分離**：圖表不受 Year/Month 篩選影響，保持完整趨勢
+   - **百分比自動識別**：TACoS、Rate 等欄位自動以百分比格式顯示
 
 ### 🔍 Seller Finder 使用流程
 
@@ -200,8 +214,9 @@ smart_dashboard_20251011/
 1. **選擇檔案**：選擇 P0 MCID MBR 類型檔案
 
 2. **設定篩選條件**（側邊欄）：
-   - **🔹 Basic**：calendar_year、calendar_month、marketplace_id、launch_channel
-   - **💰 GMS**：YTD Order GMS 範圍（最小值/最大值輸入）
+   - **🔹 Basic**：calendar_year、calendar_month、marketplace_id、launch_channel、launch_date（日期範圍）
+   - **💰 YTD GMS**：YTD Order GMS 範圍（最小值/最大值輸入）
+   - **💰 MTD GMS**：MTD Order GMS 範圍（最小值/最大值輸入）
    - **📢 Ads**：
      - MTD TACoS (%) 範圍（最小值/最大值輸入）
      - YTD SP Adopt、MTD SP Active Seller
@@ -221,11 +236,13 @@ smart_dashboard_20251011/
    - **⚡ Feature Adoption**：is_brand_rep、ytd_pl_launch、is_aplus_adopt、vine_launch_90days、ytd_fba_adopt、ytd_coupon_adopt
 
 3. **查看統計分析**：
-   - **關鍵指標統計**：New_AWAS_BA_%、AWAS_BA_%、mtd_TACoS
+   - **可自訂分析指標**：從所有數值欄位中選擇要分析的指標
+   - **預設指標**：New_AWAS_BA_%、AWAS_BA_%、mtd_TACoS
    - **視覺化圖表**：
      - 箱型圖（顯示平均值、標準差、異常值）
      - 直方圖（含平均值和中位數標線）
    - **詳細統計表**：樣本數、平均值、P25/P50/P75、標準差、最小值/最大值
+   - **智能格式化**：自動識別百分比欄位並正確顯示
 
 4. **數據預覽與下載**：
    - 自訂顯示欄位（預設顯示前 6 個重要欄位：year, month, CID, merchant_name, opportunity_owner, ytd_ord_gms）
@@ -554,7 +571,8 @@ uploaded_data/                     # 數據存儲目錄
 ├── sales_traffic_report/          # 銷售流量報告
 ├── total_year_change/             # 年度變化數據
 ├── month_yoy/                     # 月度同比數據
-└── asin_report/                   # 商品層級報告
+├── asin_report/                   # 商品層級報告
+└── asin_trend/                    # ASIN 趨勢資料 (YTD)
 ```
 
 ### 🔧 自訂修改
@@ -585,11 +603,31 @@ uploaded_data/                     # 數據存儲目錄
 
 ---
 
-**版本 3.1** | **更新日期：2025-01-26** | **績效追蹤與賣家查找強化版**
+**版本 3.1** | **更新日期：2026-01-16** | **績效追蹤與賣家查找強化版**
 
 ---
 
 ## 🆕 版本更新歷史
+
+### 版本 3.2.0 (2026-01-16)
+
+**📊 Performance Dashboard - Forecast 功能**
+- **新增 Forecast 表格**：在 Overall Sales Summary 區塊新增年度銷售預測功能
+  - 顯示去年 Sales、今年 Sales（實際+預估）、YoY 三列數據
+  - **實際 vs 預估區分**：已過月份顯示實際數據（黑字），未來月份顯示預估數據（藍字）
+  - **智能 YoY 分配**：輸入全年 YoY 目標後，系統根據去年各月波動模式自動分配到各月份
+  - **可編輯月度目標**：支援手動調整各月份 YoY 目標，自動重新計算 Sales
+  - **Undo / Reallocate 按鈕**：支援撤銷上一步操作或重新智能分配
+
+**🎨 UI/UX 優化**
+- **Actual 表格**：YoY 正數顯示綠字、負數顯示紅字
+- **Forecast 表格**：預估值顯示藍字，實際值顯示黑字
+- **KPI 與圖表間距優化**：增加 KPI widgets 與年份選擇器之間的間距
+
+**🔧 計算邏輯修正**
+- **YoY Sum 計算修正**：改用 `(今年 Sum - 去年 Sum) / 去年 Sum × 100%` 計算全年 YoY
+- **YoY Avg 欄位**：顯示 `-`（平均 YoY 百分比無意義）
+- **智能分配演算法**：保持去年各月 YoY 波動模式，僅平移至符合全年目標
 
 ### 版本 3.1.6 (2025-12-23)
 
