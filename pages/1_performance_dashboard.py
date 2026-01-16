@@ -749,87 +749,83 @@ if "Total Year Change" in loaded_data:
                     """
                     智能分配: 保持去年 YoY 的波動形狀，整體平移到符合全年目標
                     
-                    邏輯：
-                    1. 計算去年的「加權平均 YoY」
-                    2. 計算各月 YoY 跟加權平均的「差距」
-                    3. 今年各月 YoY = 全年目標 + 差距（保持波動形狀）
-                    4. 微調確保全年 Sum 正確
+                    關鍵：Sum YoY = (今年Sum - 去年Sum) / 去年Sum
+                    所以要確保各月 YoY 加權平均（權重=去年sales）等於目標
                     """
                     annual_yoy_target = max(0, annual_yoy_target)
                     
-                    # 計算去年 Sum 和前年 Sum（用來算去年的加權平均 YoY）
+                    # 計算去年 Sum
                     last_year_sum = sum(v for v in last_year_sales_dict.values() if v and pd.notna(v))
                     if last_year_sum == 0:
                         return {m: int(annual_yoy_target) for m in all_months}
                     
-                    # 計算去年的加權平均 YoY（用各月實際 YoY 的加權平均）
-                    # 權重 = 各月去年 Sales 佔比
-                    weighted_sum = 0
-                    weight_total = 0
+                    # 計算去年各月的權重（佔全年的比例）
+                    weights = {}
+                    for month in all_months:
+                        last_sales = last_year_sales_dict.get(month)
+                        if last_sales and pd.notna(last_sales):
+                            weights[month] = last_sales / last_year_sum
+                        else:
+                            weights[month] = 0
+                    
+                    # 計算去年 YoY 的加權平均
+                    weighted_yoy_sum = 0
                     for month in all_months:
                         yoy = previous_yoy_values.get(month)
-                        last_sales = last_year_sales_dict.get(month)
-                        if yoy is not None and pd.notna(yoy) and last_sales and pd.notna(last_sales):
-                            weighted_sum += yoy * last_sales
-                            weight_total += last_sales
+                        if yoy is not None and pd.notna(yoy):
+                            weighted_yoy_sum += yoy * weights[month]
                     
-                    if weight_total == 0:
-                        return {m: int(annual_yoy_target) for m in all_months}
+                    last_year_weighted_avg = weighted_yoy_sum
                     
-                    last_year_weighted_avg_yoy = weighted_sum / weight_total
-                    
-                    # 計算各月 YoY 跟加權平均的差距
+                    # 計算各月 YoY 跟加權平均的差距（波動形狀）
                     yoy_diff = {}
                     for month in all_months:
                         yoy = previous_yoy_values.get(month)
                         if yoy is not None and pd.notna(yoy):
-                            yoy_diff[month] = yoy - last_year_weighted_avg_yoy
+                            yoy_diff[month] = yoy - last_year_weighted_avg
                         else:
                             yoy_diff[month] = 0
                     
-                    # 第一輪：今年各月 YoY = 全年目標 + 差距
+                    # 初始分配：目標 + 差距
                     initial_yoy = {}
                     for month in all_months:
                         initial_yoy[month] = annual_yoy_target + yoy_diff[month]
                     
-                    # 計算用這個 YoY 會得到的全年 Sum
-                    def calc_sum_with_yoy(yoy_dict):
+                    # 計算加權平均 YoY（這就是 Sum YoY）
+                    def calc_weighted_avg_yoy(yoy_dict):
                         total = 0
                         for month in all_months:
-                            last_sales = last_year_sales_dict.get(month)
-                            if last_sales and pd.notna(last_sales):
-                                total += last_sales * (1 + yoy_dict[month] / 100)
+                            total += yoy_dict[month] * weights[month]
                         return total
                     
-                    # 目標 Sum
-                    target_sum = last_year_sum * (1 + annual_yoy_target / 100)
+                    # 迭代調整，確保加權平均 = 目標
+                    # 因為差距的加權和應該是 0，所以理論上 initial_yoy 的加權平均就是 annual_yoy_target
+                    # 但四捨五入會產生誤差，需要校正
                     
-                    # 微調：用二分法找到正確的 offset
-                    current_sum = calc_sum_with_yoy(initial_yoy)
-                    
-                    if abs(current_sum - target_sum) > 100:  # 如果誤差超過 100
-                        # 計算需要的 offset 調整
-                        # 簡化：等比例調整所有 YoY
-                        offset = 0
-                        for _ in range(20):  # 最多迭代 20 次
-                            test_yoy = {m: initial_yoy[m] + offset for m in all_months}
-                            test_sum = calc_sum_with_yoy(test_yoy)
-                            
-                            if abs(test_sum - target_sum) < 100:
-                                break
-                            
-                            # 調整 offset
-                            if test_sum < target_sum:
-                                offset += 0.5
-                            else:
-                                offset -= 0.5
-                        
-                        initial_yoy = {m: initial_yoy[m] + offset for m in all_months}
-                    
-                    # 最終結果：四捨五入到整數，不要負數
+                    # 先四捨五入
                     result = {}
                     for month in all_months:
                         result[month] = max(0, int(round(initial_yoy[month])))
+                    
+                    # 計算目前的加權平均
+                    current_weighted_avg = calc_weighted_avg_yoy(result)
+                    
+                    # 如果有誤差，逐步調整權重最大的月份
+                    max_iterations = 50
+                    for _ in range(max_iterations):
+                        diff = annual_yoy_target - current_weighted_avg
+                        if abs(diff) < 0.5:  # 誤差小於 0.5% 就停止
+                            break
+                        
+                        # 找到權重最大的月份來調整
+                        max_month = max(all_months, key=lambda m: weights.get(m, 0))
+                        
+                        if diff > 0:
+                            result[max_month] += 1
+                        else:
+                            result[max_month] = max(0, result[max_month] - 1)
+                        
+                        current_weighted_avg = calc_weighted_avg_yoy(result)
                     
                     return result
 
@@ -1221,7 +1217,31 @@ if "Total Year Change" in loaded_data:
                             }
 
                             save_targets(all_targets)
-                            st.success("✅ Saved!")
+                            # 自訂 toast 1.5 秒後消失
+                            st.markdown("""
+                            <style>
+                                .custom-toast {
+                                    position: fixed;
+                                    bottom: 20px;
+                                    right: 20px;
+                                    background-color: #d4edda;
+                                    color: #155724;
+                                    padding: 12px 24px;
+                                    border-radius: 8px;
+                                    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+                                    z-index: 9999;
+                                    animation: fadeInOut 1.5s ease-in-out forwards;
+                                    font-size: 14px;
+                                }
+                                @keyframes fadeInOut {
+                                    0% { opacity: 0; transform: translateY(20px); }
+                                    15% { opacity: 1; transform: translateY(0); }
+                                    85% { opacity: 1; transform: translateY(0); }
+                                    100% { opacity: 0; transform: translateY(-10px); }
+                                }
+                            </style>
+                            <div class="custom-toast">✅ Saved!</div>
+                            """, unsafe_allow_html=True)
 
                     # 檢查是否有變更（只有在沒有按鈕被點擊時才處理）
                     if not button_clicked:
