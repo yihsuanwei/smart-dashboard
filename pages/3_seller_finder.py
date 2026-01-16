@@ -29,6 +29,43 @@ def create_filters(df):
                 if selected:
                     filters[field] = selected
 
+    # Launch Date 篩選
+    if 'launch_date' in df.columns:
+        import pandas as pd
+        # 嘗試轉換為日期格式
+        try:
+            df['launch_date'] = pd.to_datetime(df['launch_date'], errors='coerce')
+            launch_date_data = df['launch_date'].dropna()
+
+            if not launch_date_data.empty:
+                min_date = launch_date_data.min().date()
+                max_date = launch_date_data.max().date()
+
+                st.sidebar.markdown("**Launch Date**")
+                col1, col2 = st.sidebar.columns(2)
+                with col1:
+                    start_date = st.date_input(
+                        "開始日期",
+                        value=min_date,
+                        min_value=min_date,
+                        max_value=max_date,
+                        key="launch_date_start"
+                    )
+                with col2:
+                    end_date = st.date_input(
+                        "結束日期",
+                        value=max_date,
+                        min_value=min_date,
+                        max_value=max_date,
+                        key="launch_date_end"
+                    )
+
+                # 如果日期有變動,加入篩選條件
+                if start_date != min_date or end_date != max_date:
+                    filters['launch_date'] = (start_date, end_date)
+        except Exception as e:
+            st.sidebar.warning(f"⚠️ Launch Date 欄位格式錯誤: {str(e)}")
+
     # GMS 分類
     st.sidebar.subheader("💰 YTD GMS")
     if 'ytd_ord_gms' in df.columns:
@@ -296,6 +333,18 @@ def apply_filters(df, filters):
                     filtered_df = filtered_df[
                         valid_mask & (abs(ratio - threshold_decimal) <= threshold_decimal * tolerance)
                     ]
+        elif col == 'launch_date':
+            # 處理 launch_date 日期篩選
+            if 'launch_date' in filtered_df.columns and isinstance(values, tuple):
+                import pandas as pd
+                start_date, end_date = values
+                # 確保 launch_date 欄位是日期格式
+                filtered_df['launch_date'] = pd.to_datetime(filtered_df['launch_date'], errors='coerce')
+                # 篩選日期範圍
+                filtered_df = filtered_df[
+                    (filtered_df['launch_date'].dt.date >= start_date) &
+                    (filtered_df['launch_date'].dt.date <= end_date)
+                ]
         elif col in filtered_df.columns:
             # 處理一般欄位篩選
             if isinstance(values, list):  # 多選篩選
@@ -376,9 +425,23 @@ def show_original_analysis_tab(df, selected_file):
     if not filtered_df.empty:
         st.subheader("📊 關鍵指標統計")
 
-        # 計算統計數據的欄位
-        stats_columns = ['New_AWAS_BA_%', 'AWAS_BA_%', 'mtd_TACoS']
-        available_stats = [col for col in stats_columns if col in filtered_df.columns]
+        # 取得所有數值型欄位
+        all_numeric_columns = filtered_df.select_dtypes(include=['int64', 'float64']).columns.tolist()
+
+        # 預設選擇的欄位
+        default_stats_columns = ['New_AWAS_BA_%', 'AWAS_BA_%', 'mtd_TACoS']
+        default_available = [col for col in default_stats_columns if col in all_numeric_columns]
+
+        # 讓使用者選擇要分析的指標
+        selected_stats_columns = st.multiselect(
+            "選擇要分析的指標",
+            options=all_numeric_columns,
+            default=default_available if default_available else (all_numeric_columns[:3] if len(all_numeric_columns) >= 3 else all_numeric_columns),
+            key="selected_stats_metrics",
+            help="可以選擇多個指標來查看其統計分布、中位數和 percentile"
+        )
+
+        available_stats = selected_stats_columns
 
         if available_stats:
             for col_name in available_stats:
@@ -390,18 +453,32 @@ def show_original_analysis_tab(df, selected_file):
                         display_name = "MTD TACoS (%)"
                         definition = ""
                         plot_data = col_data  # mtd_TACoS 已經是百分比形式，不需要轉換
+                        is_percentage = True
                     elif col_name == 'New_AWAS_BA_%':
                         display_name = "New AWAS BA %"
                         definition = "90 天內的 New FBA - Buyable ASIN 出數的比例"
                         plot_data = col_data * 100
+                        is_percentage = True
                     elif col_name == 'AWAS_BA_%':
                         display_name = "AWAS BA %"
                         definition = "Total Buyable ASIN 出數的比例"
                         plot_data = col_data * 100
+                        is_percentage = True
                     else:
-                        display_name = col_name.replace('_%', ' %')
+                        # 自動判斷：如果欄位名稱包含 '%' 或是小數範圍在 0-1 之間，視為百分比
+                        display_name = col_name.replace('_', ' ').title()
                         definition = ""
-                        plot_data = col_data * 100
+
+                        # 判斷是否為百分比資料
+                        if '%' in col_name or (col_data.max() <= 1.0 and col_data.min() >= 0 and col_data.mean() < 1):
+                            plot_data = col_data * 100
+                            is_percentage = True
+                            if '%' not in display_name:
+                                display_name += " (%)"
+                        else:
+                            # 一般數值欄位（如 GMS, 訂單數等）
+                            plot_data = col_data
+                            is_percentage = False
 
                     # 顯示標題和定義
                     st.markdown(f"**{display_name}**")
@@ -415,6 +492,14 @@ def show_original_analysis_tab(df, selected_file):
                         # 箱型圖
                         import plotly.graph_objects as go
 
+                        # 根據資料類型決定數值格式
+                        if is_percentage:
+                            hover_format = '%{y:.1f}<extra></extra>'
+                            tick_format = '.1f'
+                        else:
+                            hover_format = '%{y:,.0f}<extra></extra>'  # 千分位分隔，無小數
+                            tick_format = ',.0f'  # 千分位分隔
+
                         fig_box = go.Figure()
                         fig_box.add_trace(go.Box(
                             y=plot_data,
@@ -422,7 +507,7 @@ def show_original_analysis_tab(df, selected_file):
                             boxmean='sd',  # 顯示平均值和標準差
                             marker_color='lightblue',
                             boxpoints='outliers',  # 只顯示異常值點
-                            hovertemplate='%{y:.1f}<extra></extra>'  # 設定懸停顯示格式為一位小數
+                            hovertemplate=hover_format
                         ))
 
                         fig_box.update_layout(
@@ -430,7 +515,7 @@ def show_original_analysis_tab(df, selected_file):
                             yaxis_title="數值",
                             height=400,
                             showlegend=False,
-                            yaxis=dict(tickformat='.1f')  # Y軸刻度顯示一位小數
+                            yaxis=dict(tickformat=tick_format)
                         )
 
                         st.plotly_chart(fig_box, use_container_width=True)
@@ -449,11 +534,19 @@ def show_original_analysis_tab(df, selected_file):
                         mean_val = plot_data.mean()
                         median_val = plot_data.median()
 
+                        # 根據資料類型格式化標註文字
+                        if is_percentage:
+                            mean_text = f"平均: {mean_val:.1f}"
+                            median_text = f"中位數: {median_val:.1f}"
+                        else:
+                            mean_text = f"平均: {mean_val:,.0f}"
+                            median_text = f"中位數: {median_val:,.0f}"
+
                         fig_hist.add_vline(
                             x=mean_val,
                             line_dash="dash",
                             line_color="red",
-                            annotation_text=f"平均: {mean_val:.1f}",
+                            annotation_text=mean_text,
                             annotation_position="top"
                         )
 
@@ -461,13 +554,14 @@ def show_original_analysis_tab(df, selected_file):
                             x=median_val,
                             line_dash="dash",
                             line_color="green",
-                            annotation_text=f"中位數: {median_val:.1f}",
+                            annotation_text=median_text,
                             annotation_position="bottom"
                         )
 
                         fig_hist.update_layout(
                             height=400,
-                            showlegend=False
+                            showlegend=False,
+                            xaxis=dict(tickformat=tick_format)
                         )
 
                         st.plotly_chart(fig_hist, use_container_width=True)
@@ -482,29 +576,51 @@ def show_original_analysis_tab(df, selected_file):
                 for col_name in available_stats:
                     col_data = filtered_df[col_name].dropna()
                     if not col_data.empty:
-                        # 判斷是否需要轉換為百分比
+                        # 判斷資料類型並轉換
                         if col_name == 'mtd_TACoS':
                             display_data = col_data  # mtd_TACoS 已經是百分比形式
+                            is_pct = True
+                        elif col_name in ['New_AWAS_BA_%', 'AWAS_BA_%']:
+                            display_data = col_data * 100
+                            is_pct = True
+                        elif '%' in col_name or (col_data.max() <= 1.0 and col_data.min() >= 0 and col_data.mean() < 1):
+                            display_data = col_data * 100
+                            is_pct = True
                         else:
-                            display_data = col_data * 100  # 其他欄位需要乘以100
+                            display_data = col_data
+                            is_pct = False
 
-                        stats_data.append({
-                            '指標': col_name,
-                            '樣本數': len(col_data),
-                            '平均值': f"{display_data.mean():.1f}",
-                            'P25': f"{display_data.quantile(0.25):.1f}",
-                            'P50 (中位數)': f"{display_data.median():.1f}",
-                            'P75': f"{display_data.quantile(0.75):.1f}",
-                            '標準差': f"{display_data.std():.1f}",
-                            '最小值': f"{display_data.min():.1f}",
-                            '最大值': f"{display_data.max():.1f}"
-                        })
+                        # 根據類型格式化數值
+                        if is_pct:
+                            stats_data.append({
+                                '指標': col_name,
+                                '樣本數': f"{len(col_data):,}",
+                                '平均值': f"{display_data.mean():.1f}",
+                                'P25': f"{display_data.quantile(0.25):.1f}",
+                                'P50 (中位數)': f"{display_data.median():.1f}",
+                                'P75': f"{display_data.quantile(0.75):.1f}",
+                                '標準差': f"{display_data.std():.1f}",
+                                '最小值': f"{display_data.min():.1f}",
+                                '最大值': f"{display_data.max():.1f}"
+                            })
+                        else:
+                            stats_data.append({
+                                '指標': col_name,
+                                '樣本數': f"{len(col_data):,}",
+                                '平均值': f"{display_data.mean():,.0f}",
+                                'P25': f"{display_data.quantile(0.25):,.0f}",
+                                'P50 (中位數)': f"{display_data.median():,.0f}",
+                                'P75': f"{display_data.quantile(0.75):,.0f}",
+                                '標準差': f"{display_data.std():,.0f}",
+                                '最小值': f"{display_data.min():,.0f}",
+                                '最大值': f"{display_data.max():,.0f}"
+                            })
 
                 if stats_data:
                     stats_df = pd.DataFrame(stats_data)
                     st.dataframe(stats_df, use_container_width=True, hide_index=True)
         else:
-            st.info("⚠️ 未找到相關統計欄位 (New_AWAS_BA_%, AWAS_BA_%, mtd_TACoS)")
+            st.info("⚠️ 請在上方的「選擇要分析的指標」中選擇至少一個數值欄位來查看統計資訊")
 
     # 篩選後的數據預覽和下載
     if not filtered_df.empty:

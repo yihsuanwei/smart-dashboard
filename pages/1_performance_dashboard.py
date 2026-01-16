@@ -417,12 +417,12 @@ st.title("📊 Performance Dashboard")
 st.markdown("<div style='margin: 40px 0;'></div>", unsafe_allow_html=True)
 
 # 定義五種文件類型
-file_types = ["Sales Traffic Report", "Total Year Change", "Month YoY", "P0 MCID MBR", "Asin Report"]
+file_types = ["Sales Traffic Report", "Total Year Change", "Month YoY", "P0 MCID MBR", "Asin Report", "ASIN Trend (YTD)"]
 
-# 創建五個欄位來顯示不同的文件選擇器
+# 創建六個欄位來顯示不同的文件選擇器
 col1, col2, col3 = st.columns(3)
-col4, col5 = st.columns(2)
-columns = [col1, col2, col3, col4, col5]
+col4, col5, col6 = st.columns(3)
+columns = [col1, col2, col3, col4, col5, col6]
 
 # 初始化 session_state 來保存數據
 if 'multi_file_selected_files' not in st.session_state:
@@ -550,158 +550,208 @@ if "Total Year Change" in loaded_data:
         # 尋找月份欄位（第一欄）
         month_col = month_df.columns[0]
 
-        # 尋找所需的欄位
-        this_year_col = None
-        last_year_col = None
-        yoy_col = None
-
+        # 自動偵測所有年份欄位（假設欄位名稱包含年份，如 "2024 Sales", "2025 Sales" 等）
+        import re
+        year_columns = {}
         for col in month_df.columns:
-            if 'this year so far' in col.lower() and 'sales' in col.lower():
-                this_year_col = col
-            elif 'last year' in col.lower() and 'sales' in col.lower() and 'this year' not in col.lower():
-                last_year_col = col
-            elif 'yoy' in col.lower() and 'sales' in col.lower():
-                yoy_col = col
+            # 尋找包含年份(4位數字)和 sales 的欄位
+            match = re.search(r'(20\d{2})', col)
+            if match and 'sales' in col.lower():
+                year = match.group(1)
+                if year not in year_columns:
+                    year_columns[year] = col
 
-        if this_year_col and last_year_col and yoy_col:
-            # 篩選出有效的月份資料（Jan, Feb, Mar...）
-            valid_months = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec']
-            chart_data = month_df[month_df[month_col].astype(str).str.lower().isin(valid_months)].copy()
+        # 如果沒有找到年份格式的欄位，使用舊的邏輯（this year, last year）
+        if not year_columns:
+            this_year_col = None
+            last_year_col = None
+            yoy_col = None
 
-            if not chart_data.empty:
-                import plotly.graph_objects as go
+            for col in month_df.columns:
+                if 'this year so far' in col.lower() and 'sales' in col.lower():
+                    this_year_col = col
+                elif 'last year' in col.lower() and 'sales' in col.lower() and 'this year' not in col.lower():
+                    last_year_col = col
+                elif 'yoy' in col.lower() and 'sales' in col.lower():
+                    yoy_col = col
 
-                fig = go.Figure()
+            # 如果找到舊格式欄位，使用當前年份和去年作為預設
+            if this_year_col and last_year_col:
+                from datetime import datetime
+                current_year = str(datetime.now().year)
+                last_year = str(datetime.now().year - 1)
+                year_columns = {
+                    current_year: this_year_col,
+                    last_year: last_year_col
+                }
 
-                # 添加長條圖 - This year so far (深橘色)
-                fig.add_trace(go.Bar(
-                    x=chart_data[month_col],
-                    y=chart_data[this_year_col],
-                    name='This Year',
-                    marker_color='#FF6B35',  # 深橘色
-                    yaxis='y'
-                ))
+        if year_columns:
+            # 排序年份
+            sorted_years = sorted(year_columns.keys(), reverse=True)
 
-                # 添加長條圖 - Last year (淺橘色)
-                fig.add_trace(go.Bar(
-                    x=chart_data[month_col],
-                    y=chart_data[last_year_col],
-                    name='Last Year',
-                    marker_color='#FFB088',  # 淺橘色
-                    yaxis='y'
-                ))
+            # 年份選擇器
+            st.markdown("**選擇要顯示的年份**")
+            selected_years = st.multiselect(
+                "勾選年份",
+                options=sorted_years,
+                default=sorted_years[:2] if len(sorted_years) >= 2 else sorted_years,  # 預設選擇最近兩年
+                key="selected_years_for_chart"
+            )
 
-                # 添加折線圖 - YoY (咖啡色)
-                # 處理 NaN 值：在文本中顯示為空字串
-                yoy_text = [f'{val}%' if pd.notna(val) else '' for val in chart_data[yoy_col]]
+            if selected_years and len(selected_years) > 0:
+                # 篩選出有效的月份資料（Jan, Feb, Mar...）
+                valid_months = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec']
+                chart_data = month_df[month_df[month_col].astype(str).str.lower().isin(valid_months)].copy()
 
-                fig.add_trace(go.Scatter(
-                    x=chart_data[month_col],
-                    y=chart_data[yoy_col],
-                    name='YoY %',
-                    mode='lines+markers+text',
-                    line=dict(color='#8B4513', width=2),  # 咖啡色
-                    marker=dict(size=8),
-                    text=yoy_text,
-                    textposition='top center',
-                    yaxis='y2',
-                    connectgaps=False  # 當有 NaN 時不連接線段
-                ))
+                if not chart_data.empty:
+                    import plotly.graph_objects as go
 
-                # 設置雙軸
-                fig.update_layout(
-                    yaxis=dict(
-                        title='Sales ($)',
-                        side='left',
-                        separatethousands=True
-                    ),
-                    yaxis2=dict(
-                        title='YoY Change (%)',
-                        overlaying='y',
-                        side='right'
-                    ),
-                    barmode='group',
-                    hovermode='x unified',
-                    legend=dict(
-                        orientation="h",
-                        yanchor="bottom",
-                        y=1.02,
-                        xanchor="right",
-                        x=1
-                    ),
-                    height=400
-                )
+                    fig = go.Figure()
 
-                st.plotly_chart(fig, use_container_width=True)
+                    # 定義顏色列表（從深到淺）
+                    colors = ['#FF6B35', '#FFB088', '#FFC8A8', '#FFE0C8', '#FFF0E0']
 
-                # 準備表格資料
-                # 創建包含所有12個月的完整列表
+                    # 為每個選擇的年份添加長條圖
+                    sorted_selected_years = sorted(selected_years, reverse=True)  # 從新到舊排序
+                    for i, year in enumerate(sorted_selected_years):
+                        if year in year_columns:
+                            fig.add_trace(go.Bar(
+                                x=chart_data[month_col],
+                                y=chart_data[year_columns[year]],
+                                name=f'{year}',
+                                marker_color=colors[i % len(colors)],
+                                yaxis='y'
+                            ))
+
+                    # 如果選擇了至少兩個年份，添加 YoY 折線圖
+                    if len(sorted_selected_years) >= 2:
+                        # 計算相鄰年份之間的 YoY（從最新年份與前一年比較）
+                        for i in range(len(sorted_selected_years) - 1):
+                            newer_year = sorted_selected_years[i]
+                            older_year = sorted_selected_years[i + 1]
+
+                            # 計算 YoY %
+                            newer_data = chart_data[year_columns[newer_year]]
+                            older_data = chart_data[year_columns[older_year]]
+
+                            yoy_values = []
+                            yoy_text = []
+                            for j in range(len(chart_data)):
+                                newer_val = newer_data.iloc[j]
+                                older_val = older_data.iloc[j]
+
+                                if pd.notna(newer_val) and pd.notna(older_val) and older_val != 0:
+                                    yoy = ((newer_val - older_val) / older_val) * 100
+                                    yoy_values.append(yoy)
+                                    yoy_text.append(f'{yoy:.1f}%')
+                                else:
+                                    yoy_values.append(None)
+                                    yoy_text.append('')
+
+                            # 添加折線圖
+                            line_colors = ['#8B4513', '#CD853F', '#DEB887']  # 咖啡色系
+                            fig.add_trace(go.Scatter(
+                                x=chart_data[month_col],
+                                y=yoy_values,
+                                name=f'{newer_year} vs {older_year} YoY %',
+                                mode='lines+markers+text',
+                                line=dict(color=line_colors[i % len(line_colors)], width=2),
+                                marker=dict(size=8),
+                                text=yoy_text,
+                                textposition='top center',
+                                yaxis='y2',
+                                connectgaps=False
+                            ))
+
+                    # 設置雙軸
+                    fig.update_layout(
+                        yaxis=dict(
+                            title='Sales ($)',
+                            side='left',
+                            separatethousands=True
+                        ),
+                        yaxis2=dict(
+                            title='YoY Change (%)',
+                            overlaying='y',
+                            side='right'
+                        ),
+                        barmode='group',
+                        hovermode='x unified',
+                        legend=dict(
+                            orientation="h",
+                            yanchor="bottom",
+                            y=1.02,
+                            xanchor="right",
+                            x=1
+                        ),
+                        height=400
+                    )
+
+                    st.plotly_chart(fig, use_container_width=True)
+
+                # 準備表格資料 - 支援多年份
                 all_months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
-                # 建立月份對照字典
+                # 建立月份對照字典 - 包含所有選擇的年份
                 month_data = {}
                 for idx, month in enumerate(chart_data[month_col].tolist()):
-                    month_data[month] = {
-                        'last_year': chart_data[last_year_col].iloc[idx],
-                        'this_year': chart_data[this_year_col].iloc[idx],
-                        'yoy': chart_data[yoy_col].iloc[idx]
-                    }
+                    month_data[month] = {}
+                    for year in sorted_selected_years:
+                        if year in year_columns:
+                            month_data[month][year] = chart_data[year_columns[year]].iloc[idx]
 
-                # 準備完整的12個月資料（使用 None 代替 0 讓儲存格顯示為空）
-                last_year_sales = []
-                this_year_sales = []
-                yoy_values = []
-                original_this_year_has_value = []  # 追蹤原始資料中 This Year 是否有值
-
+                # 準備表格資料 - 為每個年份建立一列
+                table_data_dict = {'Metric': []}
                 for month in all_months:
-                    if month in month_data:
-                        last_year_val = month_data[month]['last_year']
-                        # 檢查是否為有效數值（非 NaN 且非 0）
-                        if pd.notna(last_year_val) and last_year_val != 0:
-                            last_year_sales.append(round(last_year_val))
-                        else:
-                            last_year_sales.append(None)
+                    table_data_dict[month] = []
 
-                        this_year_val = month_data[month]['this_year']
-                        if pd.notna(this_year_val) and this_year_val != 0:
-                            this_year_sales.append(round(this_year_val))
-                            original_this_year_has_value.append(True)
-                        else:
-                            this_year_sales.append(None)
-                            original_this_year_has_value.append(False)
-
-                        # 如果 This Year 為 0 或 None，YoY 也設為 None
-                        if pd.isna(this_year_val) or this_year_val == 0:
-                            yoy_values.append(None)
-                        else:
-                            yoy_val = month_data[month]['yoy']
-                            # 檢查 yoy_val 是否為有效數值
-                            if pd.notna(yoy_val) and yoy_val != 0:
-                                yoy_values.append(round(yoy_val))
+                # 為每個選擇的年份添加一列
+                for year in sorted_selected_years:
+                    table_data_dict['Metric'].append(f'{year} Sales')
+                    for month in all_months:
+                        if month in month_data and year in month_data[month]:
+                            val = month_data[month][year]
+                            if pd.notna(val) and val != 0:
+                                table_data_dict[month].append(round(val))
                             else:
-                                yoy_values.append(None)
-                    else:
-                        last_year_sales.append(None)
-                        this_year_sales.append(None)
-                        yoy_values.append(None)
-                        original_this_year_has_value.append(False)
+                                table_data_dict[month].append(None)
+                        else:
+                            table_data_dict[month].append(None)
+
+                # 為每對相鄰年份添加 YoY 列
+                for i in range(len(sorted_selected_years) - 1):
+                    newer_year = sorted_selected_years[i]
+                    older_year = sorted_selected_years[i + 1]
+                    table_data_dict['Metric'].append(f'{newer_year} vs {older_year} YoY (%)')
+
+                    for month in all_months:
+                        if month in month_data:
+                            newer_val = month_data[month].get(newer_year)
+                            older_val = month_data[month].get(older_year)
+
+                            if pd.notna(newer_val) and pd.notna(older_val) and older_val != 0:
+                                yoy = ((newer_val - older_val) / older_val) * 100
+                                table_data_dict[month].append(round(yoy, 1))
+                            else:
+                                table_data_dict[month].append(None)
+                        else:
+                            table_data_dict[month].append(None)
 
                 # 初始化 session state 來保存編輯狀態
-                # 檢查 Month YoY 檔案是否改變
                 current_month_yoy_file = st.session_state.get('Month YoY_filename', None)
-                if 'monthly_sales_data' not in st.session_state or 'monthly_sales_last_file' not in st.session_state or st.session_state.monthly_sales_last_file != current_month_yoy_file:
-                    # 檔案改變了，重新初始化數據
-                    st.session_state.monthly_sales_data = pd.DataFrame({
-                        'Metric': ['Last Year Sales', 'This Year Sales', 'YoY (%)'],
-                        **{month: [last_year_sales[i], this_year_sales[i], yoy_values[i]] for i, month in enumerate(all_months)}
-                    })
-                    # 儲存原始的 This Year 是否有值的資訊
-                    st.session_state.original_this_year_has_value = {month: original_this_year_has_value[i] for i, month in enumerate(all_months)}
-                    # 記錄當前使用的檔案
-                    st.session_state.monthly_sales_last_file = current_month_yoy_file
+                selected_years_key = ','.join(sorted_selected_years)
 
-                # 提示訊息
-                st.info(f"💡 提示：若某月份的 This Year Sales 原始資料為空，可在 YoY (%) 列輸入百分比值，系統會自動反推計算對應的 This Year Sales")
+                # 檢查檔案或選擇的年份是否改變
+                if ('monthly_sales_data' not in st.session_state or
+                    'monthly_sales_last_file' not in st.session_state or
+                    'monthly_sales_selected_years' not in st.session_state or
+                    st.session_state.monthly_sales_last_file != current_month_yoy_file or
+                    st.session_state.monthly_sales_selected_years != selected_years_key):
+
+                    # 重新初始化數據
+                    st.session_state.monthly_sales_data = pd.DataFrame(table_data_dict)
+                    st.session_state.monthly_sales_last_file = current_month_yoy_file
+                    st.session_state.monthly_sales_selected_years = selected_years_key
 
                 # 使用可編輯的資料表格
                 edited_df = st.data_editor(
@@ -715,30 +765,6 @@ if "Total Year Change" in loaded_data:
                     key="monthly_sales_editor"
                 )
 
-                # 自動計算邏輯：當 YoY 被修改時，自動計算 This Year Sales
-                # 只有在原始資料中 This Year 沒有值時才反推計算
-                updated = False
-                for i, month in enumerate(all_months):
-                    yoy_val = edited_df.loc[2, month]  # YoY (%)
-                    last_year_val = edited_df.loc[0, month]  # Last Year Sales
-                    current_this_year = edited_df.loc[1, month]  # 當前的 This Year Sales
-
-                    # 檢查原始資料中此月份是否有 This Year Sales
-                    original_has_value = st.session_state.original_this_year_has_value.get(month, False)
-
-                    # 只有在原始資料沒有 This Year Sales 的情況下，才用 YoY 反推計算
-                    if not original_has_value and pd.notna(yoy_val) and pd.notna(last_year_val):
-                        calculated_this_year = last_year_val * (1 + yoy_val / 100)
-                        # 檢查是否需要更新（避免無限循環）
-                        if pd.isna(current_this_year) or abs(current_this_year - calculated_this_year) > 0.01:
-                            edited_df.loc[1, month] = calculated_this_year
-                            updated = True
-
-                # 只有在有更新時才儲存到 session state
-                if updated:
-                    st.session_state.monthly_sales_data = edited_df.copy()
-                    st.rerun()
-
                 # 計算 Sum 和 Average（過濾 None 和 NaN 值）
                 def safe_sum(values):
                     return sum([v for v in values if pd.notna(v)])
@@ -747,40 +773,39 @@ if "Total Year Change" in loaded_data:
                     valid_values = [v for v in values if pd.notna(v)]
                     return sum(valid_values) / len(valid_values) if valid_values else None
 
-                last_year_sum = safe_sum([edited_df.loc[0, month] for month in all_months])
-                this_year_sum = safe_sum([edited_df.loc[1, month] for month in all_months])
+                # 為每個 Metric 計算 Sum 和 Average
+                summary_data = {'Metric': [], 'Sum': [], 'Average': []}
 
-                last_year_avg = safe_avg([edited_df.loc[0, month] for month in all_months])
-                this_year_avg = safe_avg([edited_df.loc[1, month] for month in all_months])
+                for row_idx in range(len(edited_df)):
+                    metric_name = edited_df.loc[row_idx, 'Metric']
+                    values = [edited_df.loc[row_idx, month] for month in all_months]
 
-                # 計算 YoY 的 Sum 和 Average
-                yoy_sum = None
-                yoy_avg = None
+                    # 判斷是否為 YoY 列（包含 'YoY' 或 'vs'）
+                    is_yoy = 'yoy' in metric_name.lower() or 'vs' in metric_name.lower()
 
-                if last_year_sum and last_year_sum != 0:
-                    yoy_sum = ((this_year_sum - last_year_sum) / last_year_sum) * 100
+                    sum_val = safe_sum(values)
+                    avg_val = safe_avg(values)
 
-                if last_year_avg and last_year_avg != 0:
-                    yoy_avg = ((this_year_avg - last_year_avg) / last_year_avg) * 100
+                    summary_data['Metric'].append(metric_name)
 
-                # 顯示 Sum 和 Average（創建新的 DataFrame）
-                summary_df = pd.DataFrame({
-                    'Metric': ['Last Year Sales', 'This Year Sales', 'YoY (%)'],
-                    'Sum': [f'${round(last_year_sum):,}' if last_year_sum else '-',
-                            f'${round(this_year_sum):,}' if this_year_sum else '-',
-                            f'{round(yoy_sum)}%' if yoy_sum is not None else '-'],
-                    'Average': [f'${round(last_year_avg):,}' if last_year_avg else '-',
-                                f'${round(this_year_avg):,}' if this_year_avg else '-',
-                                f'{round(yoy_avg)}%' if yoy_avg is not None else '-']
-                })
+                    if is_yoy:
+                        # YoY 列顯示為百分比
+                        summary_data['Sum'].append(f'{round(sum_val, 1)}%' if sum_val is not None else '-')
+                        summary_data['Average'].append(f'{round(avg_val, 1)}%' if avg_val is not None else '-')
+                    else:
+                        # Sales 列顯示為金額
+                        summary_data['Sum'].append(f'${round(sum_val):,}' if sum_val is not None else '-')
+                        summary_data['Average'].append(f'${round(avg_val):,}' if avg_val is not None else '-')
+
+                summary_df = pd.DataFrame(summary_data)
 
                 st.markdown("**Summary**")
                 st.dataframe(summary_df, use_container_width=True, hide_index=True)
 
             else:
-                st.warning("未找到有效的月份資料")
+                st.warning("⚠️ 請至少選擇一個年份")
         else:
-            st.warning("未找到所需的欄位（This year so far, Last year, YoY）")
+            st.warning("⚠️ 未在資料中找到年份欄位，請確保欄位名稱包含年份(如 '2024 Sales', '2025 Sales')")
 
 # Business Metrics 區塊
 if "Sales Traffic Report" in loaded_data:
@@ -1046,679 +1071,879 @@ if "Asin Report" in loaded_data:
 
     asin_df = loaded_data["Asin Report"]
 
-    # B2B 分析區塊
-    if 'B2B Sales' in asin_df.columns and 'B2B %' in asin_df.columns:
-        # 計算整體 B2B 佔比（確保轉換為數值型別）
-        try:
-            # 處理可能的字串格式（移除 $ 符號）
-            def clean_number(val):
-                if pd.isna(val):
-                    return 0.0
-                if isinstance(val, str):
-                    return float(val.replace('$', '').replace(',', '').strip())
-                return float(val)
+    # 創建三個分頁（使用自訂 CSS 增加字體大小）
+    st.markdown("""
+        <style>
+        button[data-baseweb="tab"] {
+            font-size: 18px !important;
+            padding: 12px 20px !important;
+        }
+        </style>
+    """, unsafe_allow_html=True)
 
-            total_sales = asin_df['Ordered Product Sales'].apply(clean_number).sum() if 'Ordered Product Sales' in asin_df.columns else 0.0
-            total_b2b = asin_df['B2B Sales'].apply(clean_number).sum()
-            b2b_percentage = (total_b2b / total_sales * 100) if total_sales > 0 else 0.0
-        except Exception as e:
-            st.error(f"計算 B2B 佔比時發生錯誤: {e}")
-            b2b_percentage = 0.0
+    tab1, tab2, tab3 = st.tabs(["📊 Complete ASIN Data", "📈 Trend", "🏢 B2B"])
 
-        # 根據 5% 門檻顯示警示
-        if b2b_percentage > 5:
-            st.warning(f"⚠️ B2B 佔比達 {b2b_percentage:.1f}% - 以下 ASIN 需關注")
+    # ==================== Tab 3: B2B 分析 ====================
+    with tab3:
+        # B2B 分析區塊
+        if 'B2B Sales' in asin_df.columns and 'B2B %' in asin_df.columns:
+            # 計算整體 B2B 佔比（確保轉換為數值型別）
+            try:
+                # 處理可能的字串格式（移除 $ 符號）
+                def clean_number(val):
+                    if pd.isna(val):
+                        return 0.0
+                    if isinstance(val, str):
+                        return float(val.replace('$', '').replace(',', '').strip())
+                    return float(val)
 
-            # 只顯示 B2B% > 5% 的 ASIN
-            high_b2b_asins = asin_df[asin_df['B2B %'].apply(
-                lambda x: float(str(x).replace('%', '').strip()) if pd.notna(x) else 0
-            ) > 5].copy()
+                total_sales = asin_df['Ordered Product Sales'].apply(clean_number).sum() if 'Ordered Product Sales' in asin_df.columns else 0.0
+                total_b2b = asin_df['B2B Sales'].apply(clean_number).sum()
+                b2b_percentage = (total_b2b / total_sales * 100) if total_sales > 0 else 0.0
+            except Exception as e:
+                st.error(f"計算 B2B 佔比時發生錯誤: {e}")
+                b2b_percentage = 0.0
 
-            if not high_b2b_asins.empty:
-                # 排序：按 B2B Sales 降序
-                high_b2b_asins = high_b2b_asins.sort_values('B2B Sales', ascending=False)
+            # 顯示整體 B2B 佔比（計算方式：全部 ASIN 的 B2B Sales 總和 / Ordered Product Sales 總和）
+            st.metric("整體 B2B 佔比", f"{b2b_percentage:.2f}%",
+                     help="計算方式：全部 ASIN 的 B2B Sales 總和 ÷ Ordered Product Sales 總和")
 
-                # 選擇要顯示的欄位
-                display_columns = ['Child ASIN']
-                if 'Title' in high_b2b_asins.columns:
-                    display_columns.append('Title')
-                display_columns.extend(['B2B Sales', 'B2B %', 'Ordered Product Sales'])
-
-                # 顯示表格
-                st.dataframe(
-                    high_b2b_asins[display_columns],
-                    use_container_width=True,
-                    hide_index=True
+            # 根據 5% 門檻顯示狀態
+            if b2b_percentage > 5:
+                # 綠底顯示 (使用 markdown 加上 CSS，縮小上邊距)
+                st.markdown(
+                    f'<div style="background-color: #d4edda; padding: 16px 20px; border-radius: 8px; border-left: 5px solid #28a745; margin: -10px 0 20px 0;">'
+                    f'<p style="margin: 0; font-size: 16px; line-height: 1.6;"><strong>B2B 佔整體 GMV > 5%</strong></p>'
+                    f'<p style="margin: 8px 0 0 0; font-size: 14px; color: #155724;">當前佔比：{b2b_percentage:.2f}%</p>'
+                    f'</div>',
+                    unsafe_allow_html=True
                 )
+
+                st.markdown("**以下 ASIN 需關注（B2B% > 5%）：**")
+
+                # 只顯示 B2B% > 5% 的 ASIN
+                high_b2b_asins = asin_df[asin_df['B2B %'].apply(
+                    lambda x: float(str(x).replace('%', '').strip()) if pd.notna(x) else 0
+                ) > 5].copy()
+
+                if not high_b2b_asins.empty:
+                    # 排序：按 B2B Sales 降序
+                    high_b2b_asins = high_b2b_asins.sort_values('B2B Sales', ascending=False)
+
+                    # 選擇要顯示的欄位
+                    display_columns = ['Child ASIN']
+                    if 'Title' in high_b2b_asins.columns:
+                        display_columns.append('Title')
+                    display_columns.extend(['B2B Sales', 'B2B %', 'Ordered Product Sales'])
+
+                    # 定義 B2B% 的樣式函數
+                    def highlight_b2b_percentage(val):
+                        """B2B% >= 5% 時顯示紅底"""
+                        try:
+                            # 移除 % 符號並轉換為數字
+                            num_val = float(str(val).replace('%', '').strip())
+                            if num_val >= 5:
+                                return 'background-color: pink; color: red;'
+                        except:
+                            pass
+                        return ''
+
+                    # 應用樣式
+                    styled_df = high_b2b_asins[display_columns].style.applymap(
+                        highlight_b2b_percentage,
+                        subset=['B2B %']
+                    )
+
+                    # 顯示表格
+                    st.dataframe(
+                        styled_df,
+                        use_container_width=True,
+                        hide_index=True
+                    )
+                else:
+                    st.info("雖然整體 B2B 佔比 > 5%，但沒有單一 ASIN 的 B2B% > 5%")
             else:
-                st.info("雖然整體 B2B 佔比 > 5%，但沒有單一 ASIN 的 B2B% > 5%")
-
-            st.markdown("<div style='margin: 20px 0;'></div>", unsafe_allow_html=True)
-
-    # 兩個widget
-    col1, col2 = st.columns(2)
-
-    st.markdown("<div style='margin: 20px 0;'></div>", unsafe_allow_html=True)
-
-    with col1:
-        session_median = 0
-        session_mean = 0
-        session_median_yoy = None
-        session_median_mom = None
-        session_mean_yoy = None
-        session_mean_mom = None
-        if 'Sessions - Total' in asin_df.columns:
-            # 排除0的資料
-            session_data = asin_df['Sessions - Total'].dropna()
-            session_data = session_data[session_data != 0]
-            if not session_data.empty:
-                session_median = round(session_data.median())
-                session_mean = round(session_data.mean())
-        if 'Sessions - Total - Prior Period' in asin_df.columns:
-            prior_session_data = asin_df['Sessions - Total - Prior Period'].dropna()
-            prior_session_data = prior_session_data[prior_session_data != 0]
-            if not prior_session_data.empty:
-                prior_session_median = round(prior_session_data.median())
-                prior_session_mean = round(prior_session_data.mean())
-                session_median_mom = (session_median - prior_session_median) / prior_session_median
-                session_mean_mom = (session_mean - prior_session_mean) / prior_session_mean
-
-        if 'Sessions - Total - Last Year' in asin_df.columns:
-            last_year_session_data = asin_df['Sessions - Total - Last Year'].dropna()
-            last_year_session_data = last_year_session_data[last_year_session_data != 0]
-            if not last_year_session_data.empty:
-                last_session_median = round(last_year_session_data.median())
-                last_session_mean = round(last_year_session_data.mean())
-                session_median_yoy = (session_median - last_session_median) / last_session_median
-                session_mean_yoy = (session_mean - last_session_mean) / last_session_mean
-
-        render_kpi_widget("Session (中位數)", session_median, session_median_yoy, session_median_mom)
-
-    with col2:
-        cvr_median = 0
-        cvr_mean = 0
-        cvr_median_yoy = None
-        cvr_median_mom = None
-        cvr_mean_yoy = None
-        cvr_mean_mom = None
-        if 'Unit Session Percentage' in asin_df.columns:
-            # 排除0的資料，並移除 % 符號進行計算
-            cvr_data = asin_df['Unit Session Percentage'].dropna()
-            # 移除 % 符號並轉換為數值
-            cvr_data = cvr_data.apply(
-                lambda x: float(str(x).replace('%', '').strip()) if pd.notna(x) else 0
-            )
-            cvr_data = cvr_data[cvr_data != 0]
-            if not cvr_data.empty:
-                cvr_median = round(cvr_data.median(), 2)
-                cvr_mean = round(cvr_data.mean(), 2)
-        if 'Unit Session % - Prior Period' in asin_df.columns:
-            prior_cvr_data = asin_df['Unit Session % - Prior Period'].dropna()
-            prior_cvr_data = prior_cvr_data.apply(
-                lambda x: float(str(x).replace('%', '').strip()) if pd.notna(x) else 0
-            )
-            prior_cvr_data = prior_cvr_data[prior_cvr_data != 0]
-            if not prior_cvr_data.empty:
-                prior_cvr_median = round(prior_cvr_data.median(), 2)
-                prior_cvr_mean = round(prior_cvr_data.mean(), 2)
-                cvr_median_mom = (cvr_median - prior_cvr_median) * 10000
-                cvr_mean_mom = (cvr_mean - prior_cvr_mean) * 10000
-        if 'Unit Session % - Last Year' in asin_df.columns:
-            last_cvr_data = asin_df['Unit Session % - Last Year'].dropna()
-            last_cvr_data = last_cvr_data.apply(
-                lambda x: float(str(x).replace('%', '').strip()) if pd.notna(x) else 0
-            )
-            last_cvr_data = last_cvr_data[last_cvr_data != 0]
-            if not last_cvr_data.empty:
-                last_cvr_median = round(last_cvr_data.median(), 2)
-                last_cvr_mean = round(last_cvr_data.mean(), 2)
-                cvr_median_yoy = (cvr_median - last_cvr_median) * 10000
-                cvr_mean_yoy = (cvr_mean - last_cvr_mean) * 10000
-
-        render_kpi_widget("CVR (中位數)", cvr_median, cvr_median_yoy, cvr_median_mom, suffix="%", show_change_percent=False)
-
-    # 顯示平均數
-    col3, col4 = st.columns(2)
-
-    with col3:
-        render_kpi_widget("Session (平均數)", session_mean, session_mean_yoy, session_mean_mom)
-
-    with col4:
-        render_kpi_widget("CVR (平均數)", cvr_mean, cvr_mean_yoy, cvr_mean_mom, suffix="%", show_change_percent=False)
-
-    # ASIN Sales 圓餅圖
-    st.markdown("---")
-    st.subheader("📊 ASIN Sales Contribution")
-
-    if 'Sales Contribution %' in asin_df.columns and 'Child ASIN' in asin_df.columns:
-        import plotly.graph_objects as go
-
-        # 準備數據
-        pie_data = asin_df[['Child ASIN', 'Sales Contribution %']].dropna().copy()
-
-        # 將 Sales Contribution % 轉換為數值（去除 % 符號）
-        pie_data['Sales Contribution %'] = pie_data['Sales Contribution %'].apply(
-            lambda x: float(str(x).replace('%', '').strip()) if pd.notna(x) else 0
-        )
-
-        if not pie_data.empty:
-            # 只取前10名，其餘合併為「其他」
-            top_10 = pie_data.nlargest(10, 'Sales Contribution %')
-
-            # 如果超過10筆，將剩餘的合併為「其他」
-            if len(pie_data) > 10:
-                    others_sum = pie_data.iloc[10:]['Sales Contribution %'].sum()
-                    # 創建「其他」的資料
-                    others_row = pd.DataFrame({
-                        'Child ASIN': ['其他'],
-                        'Sales Contribution %': [others_sum]
-                    })
-                    # 合併前10名和「其他」
-                    chart_data = pd.concat([top_10, others_row], ignore_index=True)
-            else:
-                chart_data = top_10
-
-            # 創建圓餅圖
-            fig = go.Figure(data=[go.Pie(
-                labels=chart_data['Child ASIN'],
-                values=chart_data['Sales Contribution %'],
-                hole=0.3,  # 甜甜圈圖效果
-                textposition='auto',
-                textinfo='label+percent',
-                hovertemplate='<b>%{label}</b><br>貢獻度: %{value}%<br>佔比: %{percent}<extra></extra>'
-            )])
-
-            fig.update_layout(
-                title="各 ASIN 銷售貢獻百分比",
-                height=500,
-                showlegend=True,
-                legend=dict(
-                    orientation="v",
-                    yanchor="middle",
-                    y=0.5,
-                    xanchor="left",
-                    x=1.05
+                # 灰底顯示（縮小上邊距）
+                st.markdown(
+                    f'<div style="background-color: #f8f9fa; padding: 16px 20px; border-radius: 8px; border-left: 5px solid #6c757d; margin: -10px 0 20px 0;">'
+                    f'<p style="margin: 0; font-size: 16px; line-height: 1.6;"><strong>B2B 佔整體 GMV < 5%</strong></p>'
+                    f'<p style="margin: 8px 0 0 0; font-size: 14px; color: #495057;">當前佔比：{b2b_percentage:.2f}%</p>'
+                    f'</div>',
+                    unsafe_allow_html=True
                 )
+
+                # 仍然顯示有 B2B 銷售的 ASIN（如果有的話）
+                b2b_asins = asin_df[asin_df['B2B Sales'].apply(
+                    lambda x: clean_number(x) > 0
+                )].copy()
+
+                if not b2b_asins.empty:
+                    st.markdown("**有 B2B 銷售的 ASIN：**")
+                    # 排序：按 B2B Sales 降序
+                    b2b_asins = b2b_asins.sort_values('B2B Sales', ascending=False)
+
+                    display_columns = ['Child ASIN']
+                    if 'Title' in b2b_asins.columns:
+                        display_columns.append('Title')
+                    display_columns.extend(['B2B Sales', 'B2B %', 'Ordered Product Sales'])
+
+                    # 定義 B2B% 的樣式函數
+                    def highlight_b2b_percentage(val):
+                        """B2B% >= 5% 時顯示紅底"""
+                        try:
+                            # 移除 % 符號並轉換為數字
+                            num_val = float(str(val).replace('%', '').strip())
+                            if num_val >= 5:
+                                return 'background-color: pink; color: red;'
+                        except:
+                            pass
+                        return ''
+
+                    # 應用樣式
+                    styled_df = b2b_asins[display_columns].style.applymap(
+                        highlight_b2b_percentage,
+                        subset=['B2B %']
+                    )
+
+                    st.dataframe(
+                        styled_df,
+                        use_container_width=True,
+                        hide_index=True
+                    )
+
+        else:
+            st.info("此資料中沒有 B2B 銷售數據")
+
+    # ==================== Tab 1: 完整 ASIN 資料 ====================
+    with tab1:
+        # 兩個widget
+        col1, col2 = st.columns(2)
+
+        st.markdown("<div style='margin: 20px 0;'></div>", unsafe_allow_html=True)
+
+        with col1:
+            session_median = 0
+            session_mean = 0
+            session_median_yoy = None
+            session_median_mom = None
+            session_mean_yoy = None
+            session_mean_mom = None
+            if 'Sessions - Total' in asin_df.columns:
+                # 排除0的資料
+                session_data = asin_df['Sessions - Total'].dropna()
+                session_data = session_data[session_data != 0]
+                if not session_data.empty:
+                    session_median = round(session_data.median())
+                    session_mean = round(session_data.mean())
+            if 'Sessions - Total - Prior Period' in asin_df.columns:
+                prior_session_data = asin_df['Sessions - Total - Prior Period'].dropna()
+                prior_session_data = prior_session_data[prior_session_data != 0]
+                if not prior_session_data.empty:
+                    prior_session_median = round(prior_session_data.median())
+                    prior_session_mean = round(prior_session_data.mean())
+                    session_median_mom = (session_median - prior_session_median) / prior_session_median
+                    session_mean_mom = (session_mean - prior_session_mean) / prior_session_mean
+
+            if 'Sessions - Total - Last Year' in asin_df.columns:
+                last_year_session_data = asin_df['Sessions - Total - Last Year'].dropna()
+                last_year_session_data = last_year_session_data[last_year_session_data != 0]
+                if not last_year_session_data.empty:
+                    last_session_median = round(last_year_session_data.median())
+                    last_session_mean = round(last_year_session_data.mean())
+                    session_median_yoy = (session_median - last_session_median) / last_session_median
+                    session_mean_yoy = (session_mean - last_session_mean) / last_session_mean
+
+            render_kpi_widget("Session (中位數)", session_median, session_median_yoy, session_median_mom)
+
+        with col2:
+            cvr_median = 0
+            cvr_mean = 0
+            cvr_median_yoy = None
+            cvr_median_mom = None
+            cvr_mean_yoy = None
+            cvr_mean_mom = None
+            if 'Unit Session Percentage' in asin_df.columns:
+                # 排除0的資料，並移除 % 符號進行計算
+                cvr_data = asin_df['Unit Session Percentage'].dropna()
+                # 移除 % 符號並轉換為數值
+                cvr_data = cvr_data.apply(
+                    lambda x: float(str(x).replace('%', '').strip()) if pd.notna(x) else 0
+                )
+                cvr_data = cvr_data[cvr_data != 0]
+                if not cvr_data.empty:
+                    cvr_median = round(cvr_data.median(), 2)
+                    cvr_mean = round(cvr_data.mean(), 2)
+            if 'Unit Session % - Prior Period' in asin_df.columns:
+                prior_cvr_data = asin_df['Unit Session % - Prior Period'].dropna()
+                prior_cvr_data = prior_cvr_data.apply(
+                    lambda x: float(str(x).replace('%', '').strip()) if pd.notna(x) else 0
+                )
+                prior_cvr_data = prior_cvr_data[prior_cvr_data != 0]
+                if not prior_cvr_data.empty:
+                    prior_cvr_median = round(prior_cvr_data.median(), 2)
+                    prior_cvr_mean = round(prior_cvr_data.mean(), 2)
+                    cvr_median_mom = (cvr_median - prior_cvr_median) * 10000
+                    cvr_mean_mom = (cvr_mean - prior_cvr_mean) * 10000
+            if 'Unit Session % - Last Year' in asin_df.columns:
+                last_cvr_data = asin_df['Unit Session % - Last Year'].dropna()
+                last_cvr_data = last_cvr_data.apply(
+                    lambda x: float(str(x).replace('%', '').strip()) if pd.notna(x) else 0
+                )
+                last_cvr_data = last_cvr_data[last_cvr_data != 0]
+                if not last_cvr_data.empty:
+                    last_cvr_median = round(last_cvr_data.median(), 2)
+                    last_cvr_mean = round(last_cvr_data.mean(), 2)
+                    cvr_median_yoy = (cvr_median - last_cvr_median) * 10000
+                    cvr_mean_yoy = (cvr_mean - last_cvr_mean) * 10000
+
+            render_kpi_widget("CVR (中位數)", cvr_median, cvr_median_yoy, cvr_median_mom, suffix="%", show_change_percent=False)
+
+        # 顯示平均數
+        col3, col4 = st.columns(2)
+
+        with col3:
+            render_kpi_widget("Session (平均數)", session_mean, session_mean_yoy, session_mean_mom)
+
+        with col4:
+            render_kpi_widget("CVR (平均數)", cvr_mean, cvr_mean_yoy, cvr_mean_mom, suffix="%", show_change_percent=False)
+
+        # ASIN Sales 圓餅圖
+        st.markdown("---")
+        st.subheader("📊 ASIN Sales Contribution")
+
+        if 'Sales Contribution %' in asin_df.columns and 'Child ASIN' in asin_df.columns:
+            import plotly.graph_objects as go
+
+            # 準備數據
+            pie_data = asin_df[['Child ASIN', 'Sales Contribution %']].dropna().copy()
+
+            # 將 Sales Contribution % 轉換為數值（去除 % 符號）
+            pie_data['Sales Contribution %'] = pie_data['Sales Contribution %'].apply(
+                lambda x: float(str(x).replace('%', '').strip()) if pd.notna(x) else 0
             )
 
-            st.plotly_chart(fig, use_container_width=True)
+            if not pie_data.empty:
+                # 只取前10名，其餘合併為「其他」
+                top_10 = pie_data.nlargest(10, 'Sales Contribution %')
 
-            # 顯示主力 ASIN (貢獻度最高的前3名)
-            top_asins = pie_data.nlargest(3, 'Sales Contribution %')
-            st.markdown("**主力 ASIN TOP 3:**")
-            for idx, row in top_asins.iterrows():
-                st.write(f"🏆 **{row['Child ASIN']}**: {row['Sales Contribution %']:.2f}%")
-
-            # 顯示完整的資料表格
-            st.markdown("---")
-            st.markdown("**完整 ASIN 資料:**")
-
-            # === ASIN 標記工具 (MVP) ===
-            import json
-            from pathlib import Path
-
-            # 載入已儲存的標記
-            marks_file = Path("uploaded_data/asin_marks.json")
-            if 'asin_marks' not in st.session_state:
-                if marks_file.exists():
-                    with open(marks_file, 'r', encoding='utf-8') as f:
-                        st.session_state.asin_marks = json.load(f)
+                # 如果超過10筆，將剩餘的合併為「其他」
+                if len(pie_data) > 10:
+                        others_sum = pie_data.iloc[10:]['Sales Contribution %'].sum()
+                        # 創建「其他」的資料
+                        others_row = pd.DataFrame({
+                            'Child ASIN': ['其他'],
+                            'Sales Contribution %': [others_sum]
+                        })
+                        # 合併前10名和「其他」
+                        chart_data = pd.concat([top_10, others_row], ignore_index=True)
                 else:
-                    st.session_state.asin_marks = {}
+                    chart_data = top_10
 
-            # 載入已儲存的自定義 Tag 清單
-            tags_file = Path("uploaded_data/asin_tags_config.json")
-            if 'asin_tags_config' not in st.session_state:
-                if tags_file.exists():
-                    with open(tags_file, 'r', encoding='utf-8') as f:
-                        st.session_state.asin_tags_config = json.load(f)
-                else:
-                    # 預設 Tag 清單
-                    st.session_state.asin_tags_config = [
-                        "🔴 重點關注",
-                        "🟡 待優化",
-                        "🟢 表現良好",
-                        "🔵 新品"
-                    ]
+                # 創建圓餅圖
+                fig = go.Figure(data=[go.Pie(
+                    labels=chart_data['Child ASIN'],
+                    values=chart_data['Sales Contribution %'],
+                    hole=0.3,  # 甜甜圈圖效果
+                    textposition='auto',
+                    textinfo='label+percent',
+                    hovertemplate='<b>%{label}</b><br>貢獻度: %{value}%<br>佔比: %{percent}<extra></extra>'
+                )])
 
-            # 添加 expander 背景樣式
-            st.markdown("""
-                <style>
-                /* 未展開時的標題列背景 */
-                div[data-testid="stExpander"] details summary {
-                    background-color: #f5f5f5;
-                    border-radius: 5px;
-                    padding: 10px;
-                }
-                /* 展開後標題列背景（上半部圓角） */
-                div[data-testid="stExpander"] details[open] summary {
-                    background-color: #f5f5f5;
-                    border-radius: 5px 5px 0 0;
-                    padding: 10px;
-                }
-                /* 展開後的內容區域背景（白色） */
-                div[data-testid="stExpander"] details[open] > div:not(summary) {
-                    background-color: white;
-                    padding: 15px;
-                    border-radius: 0 0 5px 5px;
-                }
-                </style>
-            """, unsafe_allow_html=True)
+                fig.update_layout(
+                    title="各 ASIN 銷售貢獻百分比",
+                    height=500,
+                    showlegend=True,
+                    legend=dict(
+                        orientation="v",
+                        yanchor="middle",
+                        y=0.5,
+                        xanchor="left",
+                        x=1.05
+                    )
+                )
 
-            # 標記工具 UI
-            with st.expander("⚙️ ASIN 設定與標記", expanded=False):
+                st.plotly_chart(fig, use_container_width=True)
 
-                # ===== ASIN 標記區塊 =====
-                with st.expander("🏷️ ASIN 標記", expanded=False):
+                # 顯示主力 ASIN (貢獻度最高的前3名)
+                top_asins = pie_data.nlargest(3, 'Sales Contribution %')
+                st.markdown("**主力 ASIN TOP 3:**")
+                for idx, row in top_asins.iterrows():
+                    st.write(f"🏆 **{row['Child ASIN']}**: {row['Sales Contribution %']:.2f}%")
 
-                    # 管理 Tag 子區塊
-                    st.markdown("**➕ 新增 Tag**")
-                    tag_col1, tag_col2 = st.columns([3, 1])
-                    with tag_col1:
-                        new_tag_name = st.text_input(
-                            "輸入 Tag 名稱",
-                            key="new_tag_name_input",
-                            placeholder="例如: 🟣 高優先級、⭐ 明星商品"
-                        )
-                    with tag_col2:
-                        st.markdown("<div style='margin-bottom: 8px;'>&nbsp;</div>", unsafe_allow_html=True)
-                        if st.button("新增", key="add_new_tag"):
-                            if new_tag_name and new_tag_name.strip():
-                                if new_tag_name not in st.session_state.asin_tags_config:
-                                    st.session_state.asin_tags_config.append(new_tag_name)
-                                    # 自動儲存
-                                    with open(tags_file, 'w', encoding='utf-8') as f:
-                                        json.dump(st.session_state.asin_tags_config, f, ensure_ascii=False, indent=2)
-                                    st.success(f"已新增 Tag: {new_tag_name}")
-                                    st.rerun()
-                                else:
-                                    st.warning("此 Tag 已存在")
-                            else:
-                                st.warning("請輸入 Tag 名稱")
+                # 顯示完整的資料表格
+                st.markdown("---")
+                st.markdown("**完整 ASIN 資料:**")
 
-                    st.markdown("---")
-                    st.markdown("**目前的 Tag 清單**")
+                # === ASIN 標記工具 (MVP) ===
+                import json
+                from pathlib import Path
 
-                    if st.session_state.asin_tags_config:
-                        for idx, tag in enumerate(st.session_state.asin_tags_config):
-                            col1, col2 = st.columns([4, 1])
-                            with col1:
-                                st.text(tag)
-                            with col2:
-                                if st.button("刪除", key=f"delete_tag_{idx}"):
-                                    # 刪除 Tag
-                                    st.session_state.asin_tags_config.remove(tag)
-                                    # 同時清除所有使用此 Tag 的 ASIN 標記
-                                    asins_to_remove = [asin for asin, label in st.session_state.asin_marks.items() if label == tag]
-                                    for asin in asins_to_remove:
-                                        del st.session_state.asin_marks[asin]
-                                    # 儲存
-                                    with open(tags_file, 'w', encoding='utf-8') as f:
-                                        json.dump(st.session_state.asin_tags_config, f, ensure_ascii=False, indent=2)
-                                    with open(marks_file, 'w', encoding='utf-8') as f:
-                                        json.dump(st.session_state.asin_marks, f, ensure_ascii=False, indent=2)
-                                    st.success(f"已刪除 Tag: {tag}")
-                                    st.rerun()
+                # 載入已儲存的標記
+                marks_file = Path("uploaded_data/asin_marks.json")
+                if 'asin_marks' not in st.session_state:
+                    if marks_file.exists():
+                        with open(marks_file, 'r', encoding='utf-8') as f:
+                            st.session_state.asin_marks = json.load(f)
                     else:
-                        st.info("目前沒有 Tag，請新增")
+                        st.session_state.asin_marks = {}
 
-                    if st.button("重置為預設 Tag", key="reset_tags"):
+                # 載入已儲存的自定義 Tag 清單
+                tags_file = Path("uploaded_data/asin_tags_config.json")
+                if 'asin_tags_config' not in st.session_state:
+                    if tags_file.exists():
+                        with open(tags_file, 'r', encoding='utf-8') as f:
+                            st.session_state.asin_tags_config = json.load(f)
+                    else:
+                        # 預設 Tag 清單
                         st.session_state.asin_tags_config = [
                             "🔴 重點關注",
                             "🟡 待優化",
                             "🟢 表現良好",
                             "🔵 新品"
                         ]
-                        with open(tags_file, 'w', encoding='utf-8') as f:
-                            json.dump(st.session_state.asin_tags_config, f, ensure_ascii=False, indent=2)
-                        st.success("已重置為預設 Tag")
-                        st.rerun()
 
-                    st.markdown("---")
+                # 添加 expander 背景樣式
+                st.markdown("""
+                    <style>
+                    /* 未展開時的標題列背景 */
+                    div[data-testid="stExpander"] details summary {
+                        background-color: #f5f5f5;
+                        border-radius: 5px;
+                        padding: 10px;
+                    }
+                    /* 展開後標題列背景（上半部圓角） */
+                    div[data-testid="stExpander"] details[open] summary {
+                        background-color: #f5f5f5;
+                        border-radius: 5px 5px 0 0;
+                        padding: 10px;
+                    }
+                    /* 展開後的內容區域背景（白色） */
+                    div[data-testid="stExpander"] details[open] > div:not(summary) {
+                        background-color: white;
+                        padding: 15px;
+                        border-radius: 0 0 5px 5px;
+                    }
+                    </style>
+                """, unsafe_allow_html=True)
 
-                    # 標記 ASIN 子區塊
-                    st.markdown("**✏️ 標記 ASIN**")
-                    col_a, col_b, col_c = st.columns([4, 3, 2])
-                    with col_a:
-                        mark_asin = st.text_input("輸入 ASIN", key="mark_asin_input", placeholder="例如: B0DNK675T9")
-                    with col_b:
-                        # 動態讀取 Tag 清單
-                        tag_options = ["無"] + st.session_state.asin_tags_config
-                        mark_label = st.selectbox("Tag", tag_options, key="mark_label")
-                    with col_c:
-                        # 添加空白標籤來對齊按鈕
-                        st.markdown("<div style='margin-bottom: 8px;'>&nbsp;</div>", unsafe_allow_html=True)
-                        btn_col1, btn_col2 = st.columns([1, 1])
-                        with btn_col1:
-                            if st.button("套用", key="apply_mark"):
-                                if mark_asin:
-                                    if mark_label == "無":
-                                        # 移除標記
-                                        if mark_asin in st.session_state.asin_marks:
-                                            del st.session_state.asin_marks[mark_asin]
+                # 標記工具 UI
+                with st.expander("⚙️ ASIN 設定與標記", expanded=False):
+
+                    # ===== ASIN 標記區塊 =====
+                    with st.expander("🏷️ ASIN 標記", expanded=False):
+
+                        # 管理 Tag 子區塊
+                        st.markdown("**➕ 新增 Tag**")
+                        tag_col1, tag_col2 = st.columns([3, 1])
+                        with tag_col1:
+                            new_tag_name = st.text_input(
+                                "輸入 Tag 名稱",
+                                key="new_tag_name_input",
+                                placeholder="例如: 🟣 高優先級、⭐ 明星商品"
+                            )
+                        with tag_col2:
+                            st.markdown("<div style='margin-bottom: 8px;'>&nbsp;</div>", unsafe_allow_html=True)
+                            if st.button("新增", key="add_new_tag"):
+                                if new_tag_name and new_tag_name.strip():
+                                    if new_tag_name not in st.session_state.asin_tags_config:
+                                        st.session_state.asin_tags_config.append(new_tag_name)
+                                        # 自動儲存
+                                        with open(tags_file, 'w', encoding='utf-8') as f:
+                                            json.dump(st.session_state.asin_tags_config, f, ensure_ascii=False, indent=2)
+                                        st.success(f"已新增 Tag: {new_tag_name}")
+                                        st.rerun()
                                     else:
-                                        # 新增/更新標記
-                                        st.session_state.asin_marks[mark_asin] = mark_label
-                                    # 自動儲存
-                                    with open(marks_file, 'w', encoding='utf-8') as f:
-                                        json.dump(st.session_state.asin_marks, f, ensure_ascii=False, indent=2)
-                                    st.success(f"已標記 {mark_asin}")
-                                    st.rerun()
-                        with btn_col2:
-                            if st.button("清空", key="clear_all_marks"):
-                                st.session_state.asin_marks = {}
-                                if marks_file.exists():
-                                    marks_file.unlink()
-                                st.success("已清空所有標記")
-                                st.rerun()
-
-                    # 顯示目前的標記
-                    if st.session_state.asin_marks:
-                        st.markdown("**目前標記：**")
-                        for asin, label in st.session_state.asin_marks.items():
-                            st.text(f"{label} {asin}")
-
-                # ===== 顯示設定區塊 =====
-                with st.expander("📊 顯示設定", expanded=False):
-                    st.markdown("**選擇要顯示的欄位群組**")
-
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        show_b2b = st.checkbox("🏢 B2B 數據", value=False, key="show_b2b_columns")
-                        show_comparison = st.checkbox("📈 同期比較", value=True, key="show_comparison_columns")
-                    with col2:
-                        show_inventory = st.checkbox("📦 庫存資訊", value=True, key="show_inventory_columns")
-                        show_percentage = st.checkbox("📊 變化百分比", value=True, key="show_percentage_columns")
-
-                    st.info("💡 取消勾選的欄位群組將在下方表格中隱藏")
-
-            # 顯示所有欄位的完整資料
-            display_df = asin_df.copy()
-
-            # 新增分類欄位：根據 Sessions 和 CVR 與中位數的比較
-            def classify_asin(row):
-                """根據 Sessions 和 CVR 與中位數比較，進行分類"""
-                # 取得該列的 Sessions 和 CVR
-                row_sessions = row.get('Sessions - Total', None)
-                row_cvr = row.get('Unit Session Percentage', None)
-
-                # 處理 CVR（移除 % 符號）
-                if pd.notna(row_cvr):
-                    try:
-                        row_cvr = float(str(row_cvr).replace('%', '').strip())
-                    except:
-                        row_cvr = None
-
-                # 檢查數據是否有效
-                if pd.isna(row_sessions) or row_sessions == 0 or pd.isna(row_cvr) or row_cvr == 0:
-                    return "-"
-
-                # 與中位數比較
-                sessions_high = row_sessions > session_median
-                cvr_high = row_cvr > cvr_median
-
-                # 分類邏輯
-                if sessions_high and cvr_high:
-                    return "高流量高轉化"
-                elif sessions_high and not cvr_high:
-                    return "高流量低轉化"
-                elif not sessions_high and cvr_high:
-                    return "低流量高轉化"
-                else:
-                    return "低流量低轉化"
-
-            # 應用分類函數
-            display_df.insert(1, 'Performance', display_df.apply(classify_asin, axis=1))
-
-            # 新增標記欄位
-            if st.session_state.asin_marks:
-                display_df.insert(2, 'Tag', display_df['Child ASIN'].map(st.session_state.asin_marks).fillna('-'))
-
-            # 如果有 Sales Contribution % 欄位，按照貢獻度排序（在重命名之前）
-            contribution_col = 'Sales Contribution %'
-            if contribution_col in display_df.columns:
-                # 創建一個用於排序的數值欄位
-                display_df['_sort_value'] = display_df['Sales Contribution %'].apply(
-                    lambda x: float(str(x).replace('%', '').strip()) if pd.notna(x) else 0
-                )
-                # 排序（由高到低）
-                display_df = display_df.sort_values('_sort_value', ascending=False)
-                # 移除排序用的欄位
-                display_df = display_df.drop(columns=['_sort_value'])
-
-            # ===== 根據顯示設定過濾欄位 =====
-            columns_to_remove = []
-
-            # B2B 數據
-            if not st.session_state.get('show_b2b_columns', True):
-                b2b_columns = ['B2B Sales', 'B2B %']
-                columns_to_remove.extend([col for col in b2b_columns if col in display_df.columns])
-
-            # 同期比較
-            if not st.session_state.get('show_comparison_columns', True):
-                comparison_columns = [
-                    'Ordered Product Sales - Prior Period', 'Ordered Product Sales - Last Year',
-                    'Sessions - Total - Prior Period', 'Sessions - Total - Last Year',
-                    'Total Order Items - Prior Period', 'Total Order Items - Last Year',
-                    'Unit Session % - Prior Period', 'Unit Session % - Last Year'
-                ]
-                columns_to_remove.extend([col for col in comparison_columns if col in display_df.columns])
-
-            # 庫存資訊
-            if not st.session_state.get('show_inventory_columns', True):
-                inventory_columns = ['Available', 'Total Days of Supply', 'WOC']
-                columns_to_remove.extend([col for col in inventory_columns if col in display_df.columns])
-
-            # 變化百分比
-            if not st.session_state.get('show_percentage_columns', True):
-                percentage_columns = ['MoM', 'YoY']
-                columns_to_remove.extend([col for col in percentage_columns if col in display_df.columns])
-
-            # 移除欄位
-            if columns_to_remove:
-                display_df = display_df.drop(columns=columns_to_remove, errors='ignore')
-
-            # 重新命名欄位標題
-            column_rename_map = {
-                'Ordered Product Sales': 'Sales',
-                'Ordered Product Sales - Prior Period': 'Sales-lm',
-                'Ordered Product Sales - Last Year': 'Sales-ly',
-                'Sessions - Total': 'Sessions',
-                'Sessions - Total - Prior Period': 'Sessions-lm',
-                'Sessions - Total - Last Year': 'Sessions-ly',
-                'Total Order Items':'Orders',
-                'Total Order Items - Prior Period': 'Orders-lm',
-                'Total Order Items - Last Year': 'Orders-ly',
-                'Unit Session Percentage': 'CVR',
-                'Unit Session % - Prior Period': 'CVR-lm',
-                'Unit Session % - Last Year': 'CVR-ly',
-                'Sales Contribution %':'Sales %',
-                'Total Days of Supply':'TDoS'
-                # 'Original Column Name': 'New Display Name',
-            }
-            display_df = display_df.rename(columns=column_rename_map)
-
-            # 重設索引，從1開始編號
-            display_df = display_df.reset_index(drop=True)
-            display_df.index = display_df.index + 1
-
-            # 定義樣式函數：將 MoM 和 YoY 的正值顯示為綠色，負值顯示為紅色
-            def color_mom_yoy(val):
-                """根據正負值返回顏色"""
-                try:
-                    # 嘗試將值轉換為數字（移除可能的 % 符號和 bps 文字）
-                    num_val = float(str(val).replace('%', '').replace('bps', '').strip())
-                    if num_val > 0:
-                        return 'color: green'
-                    elif num_val < 0:
-                        return 'color: red'
-                    else:
-                        return 'color: black'
-                except:
-                    return ''
-
-
-
-            # 格式化數值欄位
-            def format_values(df):
-                formatted_df = df.copy()
-                for col in formatted_df.columns:
-                    if any(keyword in col.lower() for keyword in ['sales', 'revenue']):
-                        # Sales 相關欄位加上$符號和千位逗號
-                        formatted_df[col] = formatted_df[col].apply(
-                            lambda x: f"${x:,.2f}" if isinstance(x, (int, float)) and pd.notna(x) else x
-                        )
-                    elif any(keyword in col.lower() for keyword in ['available', 'total days of supply', 'totaldays', 'woc', 'tdos']):
-                        # Available, total days of supply, totaldays, woc, tdos 欄位顯示為整數
-                        formatted_df[col] = formatted_df[col].apply(
-                            lambda x: f"{round(x):,}" if isinstance(x, (int, float)) and pd.notna(x) else x
-                        )
-                return formatted_df
-
-            formatted_display_df = format_values(display_df)
-
-            # 找出 MoM 和 YoY 相關的欄位
-            mom_yoy_cols = [col for col in formatted_display_df.columns if 'mom' in col.lower() or 'yoy' in col.lower()]
-
-            # 從分組中提取各類型欄位
-            sales_percentage_cols = [col for col in display_df.columns if col.lower() == 'sales %']
-            sales_cols = [col for col in display_df.columns if col.lower() in ['sales', 'sales-lm', 'sales-ly']]
-            sessions_cols = [col for col in display_df.columns if col.lower() in ['sessions', 'sessions-lm', 'sessions-ly']]
-            orders_cols = [field for field in display_df.columns if field.lower() in ['orders', 'orders-lm', 'orders-ly']]
-            cvr_cols = [field for field in display_df.columns if field.lower() in ['cvr', 'cvr-lm', 'cvr-ly']]
-
-            # 預先計算每組欄位的最小最大值
-            def calculate_group_min_max(df, cols):
-                """計算一組欄位的全局最小最大值"""
-                all_values = []
-                for col in cols:
-                    if col in df.columns:
-                        for val in df[col]:
-                            try:
-                                if isinstance(val, str):
-                                    numeric_val = float(val.replace('$', '').replace(',', '').replace('%', '').strip())
+                                        st.warning("此 Tag 已存在")
                                 else:
-                                    numeric_val = float(val) if pd.notna(val) else 0
-                                if numeric_val > 0:
-                                    all_values.append(numeric_val)
-                            except:
-                                pass
+                                    st.warning("請輸入 Tag 名稱")
 
-                if all_values:
-                    return min(all_values), max(all_values)
-                return None, None
+                        st.markdown("---")
+                        st.markdown("**目前的 Tag 清單**")
 
-            # 計算各組的最小最大值
-            sales_percentage_min, sales_percentage_max = calculate_group_min_max(formatted_display_df, sales_percentage_cols)
-            sales_min, sales_max = calculate_group_min_max(formatted_display_df, sales_cols)
-            sessions_min, sessions_max = calculate_group_min_max(formatted_display_df, sessions_cols)
-            orders_min, orders_max = calculate_group_min_max(formatted_display_df, orders_cols)
-            cvr_min, cvr_max = calculate_group_min_max(formatted_display_df, cvr_cols)
-
-            # 定義通用熱力圖背景色函數
-            def apply_heatmap(col, target_cols, light_rgb, dark_rgb, group_min, group_max):
-                """為指定欄位添加熱力圖背景，並根據背景明度調整字體顏色
-
-                Args:
-                    col: 欄位資料
-                    target_cols: 目標欄位列表
-                    light_rgb: 淺色 RGB 元組 (r, g, b)
-                    dark_rgb: 深色 RGB 元組 (r, g, b)
-                    group_min: 該組欄位的全局最小值
-                    group_max: 該組欄位的全局最大值
-                """
-                if col.name not in target_cols:
-                    return [''] * len(col)
-
-                # 檢查是否有有效的最小最大值
-                if group_min is None or group_max is None:
-                    return [''] * len(col)
-
-                # 提取數值（移除格式化的 $、逗號和 % 符號）
-                numeric_values = []
-                for val in col:
-                    try:
-                        if isinstance(val, str):
-                            # 移除 $、逗號、% 符號和空格
-                            numeric_val = float(val.replace('$', '').replace(',', '').replace('%', '').strip())
+                        if st.session_state.asin_tags_config:
+                            for idx, tag in enumerate(st.session_state.asin_tags_config):
+                                col1, col2 = st.columns([4, 1])
+                                with col1:
+                                    st.text(tag)
+                                with col2:
+                                    if st.button("刪除", key=f"delete_tag_{idx}"):
+                                        # 刪除 Tag
+                                        st.session_state.asin_tags_config.remove(tag)
+                                        # 同時清除所有使用此 Tag 的 ASIN 標記
+                                        asins_to_remove = [asin for asin, label in st.session_state.asin_marks.items() if label == tag]
+                                        for asin in asins_to_remove:
+                                            del st.session_state.asin_marks[asin]
+                                        # 儲存
+                                        with open(tags_file, 'w', encoding='utf-8') as f:
+                                            json.dump(st.session_state.asin_tags_config, f, ensure_ascii=False, indent=2)
+                                        with open(marks_file, 'w', encoding='utf-8') as f:
+                                            json.dump(st.session_state.asin_marks, f, ensure_ascii=False, indent=2)
+                                        st.success(f"已刪除 Tag: {tag}")
+                                        st.rerun()
                         else:
-                            numeric_val = float(val) if pd.notna(val) else 0
-                        numeric_values.append(numeric_val)
-                    except:
-                        numeric_values.append(0)
+                            st.info("目前沒有 Tag，請新增")
 
-                # 為每個值生成背景色和字體顏色
-                styles = []
-                for val in numeric_values:
-                    if val <= 0:
-                        styles.append('')
+                        if st.button("重置為預設 Tag", key="reset_tags"):
+                            st.session_state.asin_tags_config = [
+                                "🔴 重點關注",
+                                "🟡 待優化",
+                                "🟢 表現良好",
+                                "🔵 新品"
+                            ]
+                            with open(tags_file, 'w', encoding='utf-8') as f:
+                                json.dump(st.session_state.asin_tags_config, f, ensure_ascii=False, indent=2)
+                            st.success("已重置為預設 Tag")
+                            st.rerun()
+
+                        st.markdown("---")
+
+                        # 標記 ASIN 子區塊
+                        st.markdown("**✏️ 標記 ASIN**")
+                        col_a, col_b, col_c = st.columns([4, 3, 2])
+                        with col_a:
+                            mark_asin = st.text_input("輸入 ASIN", key="mark_asin_input", placeholder="例如: B0DNK675T9")
+                        with col_b:
+                            # 動態讀取 Tag 清單
+                            tag_options = ["無"] + st.session_state.asin_tags_config
+                            mark_label = st.selectbox("Tag", tag_options, key="mark_label")
+                        with col_c:
+                            # 添加空白標籤來對齊按鈕
+                            st.markdown("<div style='margin-bottom: 8px;'>&nbsp;</div>", unsafe_allow_html=True)
+                            btn_col1, btn_col2 = st.columns([1, 1])
+                            with btn_col1:
+                                if st.button("套用", key="apply_mark"):
+                                    if mark_asin:
+                                        if mark_label == "無":
+                                            # 移除標記
+                                            if mark_asin in st.session_state.asin_marks:
+                                                del st.session_state.asin_marks[mark_asin]
+                                        else:
+                                            # 新增/更新標記
+                                            st.session_state.asin_marks[mark_asin] = mark_label
+                                        # 自動儲存
+                                        with open(marks_file, 'w', encoding='utf-8') as f:
+                                            json.dump(st.session_state.asin_marks, f, ensure_ascii=False, indent=2)
+                                        st.success(f"已標記 {mark_asin}")
+                                        st.rerun()
+                            with btn_col2:
+                                if st.button("清空", key="clear_all_marks"):
+                                    st.session_state.asin_marks = {}
+                                    if marks_file.exists():
+                                        marks_file.unlink()
+                                    st.success("已清空所有標記")
+                                    st.rerun()
+
+                        # 顯示目前的標記
+                        if st.session_state.asin_marks:
+                            st.markdown("**目前標記：**")
+                            for asin, label in st.session_state.asin_marks.items():
+                                st.text(f"{label} {asin}")
+
+                    # ===== 顯示設定區塊 =====
+                    with st.expander("📊 顯示設定", expanded=False):
+                        st.markdown("**選擇要顯示的欄位群組**")
+
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            show_b2b = st.checkbox("🏢 B2B 數據", value=False, key="show_b2b_columns")
+                            show_comparison = st.checkbox("📈 同期比較", value=True, key="show_comparison_columns")
+                        with col2:
+                            show_inventory = st.checkbox("📦 庫存資訊", value=True, key="show_inventory_columns")
+                            show_percentage = st.checkbox("📊 變化百分比", value=True, key="show_percentage_columns")
+
+                        st.info("💡 取消勾選的欄位群組將在下方表格中隱藏")
+
+                # 顯示所有欄位的完整資料
+                display_df = asin_df.copy()
+
+                # 新增分類欄位：根據 Sessions 和 CVR 與中位數的比較
+                def classify_asin(row):
+                    """根據 Sessions 和 CVR 與中位數比較，進行分類"""
+                    # 取得該列的 Sessions 和 CVR
+                    row_sessions = row.get('Sessions - Total', None)
+                    row_cvr = row.get('Unit Session Percentage', None)
+
+                    # 處理 CVR（移除 % 符號）
+                    if pd.notna(row_cvr):
+                        try:
+                            row_cvr = float(str(row_cvr).replace('%', '').strip())
+                        except:
+                            row_cvr = None
+
+                    # 檢查數據是否有效
+                    if pd.isna(row_sessions) or row_sessions == 0 or pd.isna(row_cvr) or row_cvr == 0:
+                        return "-"
+
+                    # 與中位數比較
+                    sessions_high = row_sessions > session_median
+                    cvr_high = row_cvr > cvr_median
+
+                    # 分類邏輯
+                    if sessions_high and cvr_high:
+                        return "高流量高轉化"
+                    elif sessions_high and not cvr_high:
+                        return "高流量低轉化"
+                    elif not sessions_high and cvr_high:
+                        return "低流量高轉化"
                     else:
-                        # 正規化到 0-1 之間（使用整組的最小最大值）
-                        if group_max > group_min:
-                            normalized = (val - group_min) / (group_max - group_min)
+                        return "低流量低轉化"
+
+                # 應用分類函數
+                display_df.insert(1, 'Performance', display_df.apply(classify_asin, axis=1))
+
+                # 新增標記欄位
+                if st.session_state.asin_marks:
+                    display_df.insert(2, 'Tag', display_df['Child ASIN'].map(st.session_state.asin_marks).fillna('-'))
+
+                # 如果有 Sales Contribution % 欄位，按照貢獻度排序（在重命名之前）
+                contribution_col = 'Sales Contribution %'
+                if contribution_col in display_df.columns:
+                    # 創建一個用於排序的數值欄位
+                    display_df['_sort_value'] = display_df['Sales Contribution %'].apply(
+                        lambda x: float(str(x).replace('%', '').strip()) if pd.notna(x) else 0
+                    )
+                    # 排序（由高到低）
+                    display_df = display_df.sort_values('_sort_value', ascending=False)
+                    # 移除排序用的欄位
+                    display_df = display_df.drop(columns=['_sort_value'])
+
+                # ===== 根據顯示設定過濾欄位 =====
+                columns_to_remove = []
+
+                # B2B 數據
+                if not st.session_state.get('show_b2b_columns', True):
+                    b2b_columns = ['B2B Sales', 'B2B %']
+                    columns_to_remove.extend([col for col in b2b_columns if col in display_df.columns])
+
+                # 同期比較
+                if not st.session_state.get('show_comparison_columns', True):
+                    comparison_columns = [
+                        'Ordered Product Sales - Prior Period', 'Ordered Product Sales - Last Year',
+                        'Sessions - Total - Prior Period', 'Sessions - Total - Last Year',
+                        'Total Order Items - Prior Period', 'Total Order Items - Last Year',
+                        'Unit Session % - Prior Period', 'Unit Session % - Last Year'
+                    ]
+                    columns_to_remove.extend([col for col in comparison_columns if col in display_df.columns])
+
+                # 庫存資訊
+                if not st.session_state.get('show_inventory_columns', True):
+                    inventory_columns = ['Available', 'Total Days of Supply', 'WOC']
+                    columns_to_remove.extend([col for col in inventory_columns if col in display_df.columns])
+
+                # 變化百分比
+                if not st.session_state.get('show_percentage_columns', True):
+                    percentage_columns = ['MoM', 'YoY']
+                    columns_to_remove.extend([col for col in percentage_columns if col in display_df.columns])
+
+                # 移除欄位
+                if columns_to_remove:
+                    display_df = display_df.drop(columns=columns_to_remove, errors='ignore')
+
+                # 重新命名欄位標題
+                column_rename_map = {
+                    'Ordered Product Sales': 'Sales',
+                    'Ordered Product Sales - Prior Period': 'Sales-lm',
+                    'Ordered Product Sales - Last Year': 'Sales-ly',
+                    'Sessions - Total': 'Sessions',
+                    'Sessions - Total - Prior Period': 'Sessions-lm',
+                    'Sessions - Total - Last Year': 'Sessions-ly',
+                    'Total Order Items':'Orders',
+                    'Total Order Items - Prior Period': 'Orders-lm',
+                    'Total Order Items - Last Year': 'Orders-ly',
+                    'Unit Session Percentage': 'CVR',
+                    'Unit Session % - Prior Period': 'CVR-lm',
+                    'Unit Session % - Last Year': 'CVR-ly',
+                    'Sales Contribution %':'Sales %',
+                    'Total Days of Supply':'TDoS'
+                    # 'Original Column Name': 'New Display Name',
+                }
+                display_df = display_df.rename(columns=column_rename_map)
+
+                # 重設索引，從1開始編號
+                display_df = display_df.reset_index(drop=True)
+                display_df.index = display_df.index + 1
+
+                # 定義樣式函數：將 MoM 和 YoY 的正值顯示為綠色，負值顯示為紅色
+                def color_mom_yoy(val):
+                    """根據正負值返回顏色"""
+                    try:
+                        # 嘗試將值轉換為數字（移除可能的 % 符號和 bps 文字）
+                        num_val = float(str(val).replace('%', '').replace('bps', '').strip())
+                        if num_val > 0:
+                            return 'color: green'
+                        elif num_val < 0:
+                            return 'color: red'
                         else:
-                            normalized = 0.5
-
-                        # 使用線性插值計算顏色
-                        r = int(light_rgb[0] - (light_rgb[0] - dark_rgb[0]) * normalized)
-                        g = int(light_rgb[1] - (light_rgb[1] - dark_rgb[1]) * normalized)
-                        b = int(light_rgb[2] - (light_rgb[2] - dark_rgb[2]) * normalized)
-
-                        # 計算明度 (luminance) 來決定字體顏色
-                        # 使用公式: luminance = 0.299*R + 0.587*G + 0.114*B
-                        luminance = 0.299 * r + 0.587 * g + 0.114 * b
-
-                        # 如果背景較亮（luminance > 128），使用深色字體；否則使用淺色字體
-                        text_color = 'black' if luminance > 128 else 'white'
-
-                        bg_color = f'rgb({r}, {g}, {b})'
-                        styles.append(f'background-color: {bg_color}; color: {text_color}')
-
-                return styles
-
-            # 應用樣式
-            styled_df = formatted_display_df.style
-
-            # 應用 MoM/YoY 文字顏色
-            if mom_yoy_cols:
-                styled_df = styled_df.apply(lambda x: [color_mom_yoy(v) if x.name in mom_yoy_cols else '' for v in x], axis=0)
-
-            if sales_percentage_cols:
-                styled_df = styled_df.apply(lambda x: apply_heatmap(x, sales_percentage_cols, (227, 242, 253), (25, 118, 210), sales_percentage_min, sales_percentage_max), axis=0)
-
-            # 應用 Sales 熱力圖背景色（藍色系：淺藍 #E3F2FD 到深藍 #1976D2）
-            if sales_cols:
-                styled_df = styled_df.apply(lambda x: apply_heatmap(x, sales_cols, (227, 242, 253), (25, 118, 210), sales_min, sales_max), axis=0)
-
-            # 應用 Sessions 熱力圖背景色（綠色系：淺綠 #E1F5E0 到深綠 #2E7D32）
-            if sessions_cols:
-                styled_df = styled_df.apply(lambda x: apply_heatmap(x, sessions_cols, (225, 245, 224), (46, 125, 50), sessions_min, sessions_max), axis=0)
-
-            # 應用 Orders 熱力圖背景色（紫色系：很淡紫 #F3E5F5 到中紫 #9C27B0）
-            if orders_cols:
-                styled_df = styled_df.apply(lambda x: apply_heatmap(x, orders_cols, (246, 235, 255), (186, 102, 255), orders_min, orders_max), axis=0)
-
-            # 應用 CVR 熱力圖背景色（橘黃色系：淺橘黃 #FFF3E0 到深橘 #F57C00）
-            if cvr_cols:
-                styled_df = styled_df.apply(lambda x: apply_heatmap(x, cvr_cols, (255, 243, 224), (245, 124, 0), cvr_min, cvr_max), axis=0)
+                            return 'color: black'
+                    except:
+                        return ''
 
 
-            def highlight_woc(val):
-                """針對 WOC 欄位條件上色"""
-                if float(val) <= 4:
-                    return "background-color: pink; color: red;"
-                elif float(val) > 8:
-                    return "color: red;"
-                else:
-                    return ""
 
-            styled_df = styled_df.applymap(highlight_woc, subset=["WOC"])
+                # 格式化數值欄位
+                def format_values(df):
+                    formatted_df = df.copy()
+                    for col in formatted_df.columns:
+                        if any(keyword in col.lower() for keyword in ['sales', 'revenue']):
+                            # Sales 相關欄位加上$符號和千位逗號
+                            formatted_df[col] = formatted_df[col].apply(
+                                lambda x: f"${x:,.2f}" if isinstance(x, (int, float)) and pd.notna(x) else x
+                            )
+                        elif any(keyword in col.lower() for keyword in ['available', 'total days of supply', 'totaldays', 'woc', 'tdos']):
+                            # Available, total days of supply, totaldays, woc, tdos 欄位顯示為整數
+                            formatted_df[col] = formatted_df[col].apply(
+                                lambda x: f"{round(x):,}" if isinstance(x, (int, float)) and pd.notna(x) else x
+                            )
+                    return formatted_df
 
-            st.dataframe(styled_df, use_container_width=True)
+                formatted_display_df = format_values(display_df)
+
+                # 找出 MoM 和 YoY 相關的欄位
+                mom_yoy_cols = [col for col in formatted_display_df.columns if 'mom' in col.lower() or 'yoy' in col.lower()]
+
+                # 從分組中提取各類型欄位
+                sales_percentage_cols = [col for col in display_df.columns if col.lower() == 'sales %']
+                sales_cols = [col for col in display_df.columns if col.lower() in ['sales', 'sales-lm', 'sales-ly']]
+                sessions_cols = [col for col in display_df.columns if col.lower() in ['sessions', 'sessions-lm', 'sessions-ly']]
+                orders_cols = [field for field in display_df.columns if field.lower() in ['orders', 'orders-lm', 'orders-ly']]
+                cvr_cols = [field for field in display_df.columns if field.lower() in ['cvr', 'cvr-lm', 'cvr-ly']]
+
+                # 預先計算每組欄位的最小最大值
+                def calculate_group_min_max(df, cols):
+                    """計算一組欄位的全局最小最大值"""
+                    all_values = []
+                    for col in cols:
+                        if col in df.columns:
+                            for val in df[col]:
+                                try:
+                                    if isinstance(val, str):
+                                        numeric_val = float(val.replace('$', '').replace(',', '').replace('%', '').strip())
+                                    else:
+                                        numeric_val = float(val) if pd.notna(val) else 0
+                                    if numeric_val > 0:
+                                        all_values.append(numeric_val)
+                                except:
+                                    pass
+
+                    if all_values:
+                        return min(all_values), max(all_values)
+                    return None, None
+
+                # 計算各組的最小最大值
+                sales_percentage_min, sales_percentage_max = calculate_group_min_max(formatted_display_df, sales_percentage_cols)
+                sales_min, sales_max = calculate_group_min_max(formatted_display_df, sales_cols)
+                sessions_min, sessions_max = calculate_group_min_max(formatted_display_df, sessions_cols)
+                orders_min, orders_max = calculate_group_min_max(formatted_display_df, orders_cols)
+                cvr_min, cvr_max = calculate_group_min_max(formatted_display_df, cvr_cols)
+
+                # 定義通用熱力圖背景色函數
+                def apply_heatmap(col, target_cols, light_rgb, dark_rgb, group_min, group_max):
+                    """為指定欄位添加熱力圖背景，並根據背景明度調整字體顏色
+
+                    Args:
+                        col: 欄位資料
+                        target_cols: 目標欄位列表
+                        light_rgb: 淺色 RGB 元組 (r, g, b)
+                        dark_rgb: 深色 RGB 元組 (r, g, b)
+                        group_min: 該組欄位的全局最小值
+                        group_max: 該組欄位的全局最大值
+                    """
+                    if col.name not in target_cols:
+                        return [''] * len(col)
+
+                    # 檢查是否有有效的最小最大值
+                    if group_min is None or group_max is None:
+                        return [''] * len(col)
+
+                    # 提取數值（移除格式化的 $、逗號和 % 符號）
+                    numeric_values = []
+                    for val in col:
+                        try:
+                            if isinstance(val, str):
+                                # 移除 $、逗號、% 符號和空格
+                                numeric_val = float(val.replace('$', '').replace(',', '').replace('%', '').strip())
+                            else:
+                                numeric_val = float(val) if pd.notna(val) else 0
+                            numeric_values.append(numeric_val)
+                        except:
+                            numeric_values.append(0)
+
+                    # 為每個值生成背景色和字體顏色
+                    styles = []
+                    for val in numeric_values:
+                        if val <= 0:
+                            styles.append('')
+                        else:
+                            # 正規化到 0-1 之間（使用整組的最小最大值）
+                            if group_max > group_min:
+                                normalized = (val - group_min) / (group_max - group_min)
+                            else:
+                                normalized = 0.5
+
+                            # 使用線性插值計算顏色
+                            r = int(light_rgb[0] - (light_rgb[0] - dark_rgb[0]) * normalized)
+                            g = int(light_rgb[1] - (light_rgb[1] - dark_rgb[1]) * normalized)
+                            b = int(light_rgb[2] - (light_rgb[2] - dark_rgb[2]) * normalized)
+
+                            # 計算明度 (luminance) 來決定字體顏色
+                            # 使用公式: luminance = 0.299*R + 0.587*G + 0.114*B
+                            luminance = 0.299 * r + 0.587 * g + 0.114 * b
+
+                            # 如果背景較亮（luminance > 128），使用深色字體；否則使用淺色字體
+                            text_color = 'black' if luminance > 128 else 'white'
+
+                            bg_color = f'rgb({r}, {g}, {b})'
+                            styles.append(f'background-color: {bg_color}; color: {text_color}')
+
+                    return styles
+
+                # 應用樣式
+                styled_df = formatted_display_df.style
+
+                # 應用 MoM/YoY 文字顏色
+                if mom_yoy_cols:
+                    styled_df = styled_df.apply(lambda x: [color_mom_yoy(v) if x.name in mom_yoy_cols else '' for v in x], axis=0)
+
+                if sales_percentage_cols:
+                    styled_df = styled_df.apply(lambda x: apply_heatmap(x, sales_percentage_cols, (227, 242, 253), (25, 118, 210), sales_percentage_min, sales_percentage_max), axis=0)
+
+                # 應用 Sales 熱力圖背景色（藍色系：淺藍 #E3F2FD 到深藍 #1976D2）
+                if sales_cols:
+                    styled_df = styled_df.apply(lambda x: apply_heatmap(x, sales_cols, (227, 242, 253), (25, 118, 210), sales_min, sales_max), axis=0)
+
+                # 應用 Sessions 熱力圖背景色（綠色系：淺綠 #E1F5E0 到深綠 #2E7D32）
+                if sessions_cols:
+                    styled_df = styled_df.apply(lambda x: apply_heatmap(x, sessions_cols, (225, 245, 224), (46, 125, 50), sessions_min, sessions_max), axis=0)
+
+                # 應用 Orders 熱力圖背景色（紫色系：很淡紫 #F3E5F5 到中紫 #9C27B0）
+                if orders_cols:
+                    styled_df = styled_df.apply(lambda x: apply_heatmap(x, orders_cols, (246, 235, 255), (186, 102, 255), orders_min, orders_max), axis=0)
+
+                # 應用 CVR 熱力圖背景色（橘黃色系：淺橘黃 #FFF3E0 到深橘 #F57C00）
+                if cvr_cols:
+                    styled_df = styled_df.apply(lambda x: apply_heatmap(x, cvr_cols, (255, 243, 224), (245, 124, 0), cvr_min, cvr_max), axis=0)
+
+
+                def highlight_woc(val):
+                    """針對 WOC 欄位條件上色"""
+                    if float(val) <= 4:
+                        return "background-color: pink; color: red;"
+                    elif float(val) > 8:
+                        return "color: red;"
+                    else:
+                        return ""
+
+                styled_df = styled_df.applymap(highlight_woc, subset=["WOC"])
+
+                st.dataframe(styled_df, use_container_width=True)
+            else:
+                st.warning("無可用的 Sales Contribution % 資料")
         else:
-            st.warning("無可用的 Sales Contribution % 資料")
-    else:
-        st.warning("未找到 Sales Contribution % 欄位")
+            st.warning("未找到 Sales Contribution % 欄位")
+
+    # ==================== Tab 2: 趨勢分析 ====================
+    with tab2:
+        # 檢查是否有載入 ASIN Trend 資料
+        if "ASIN Trend (YTD)" in loaded_data:
+            trend_df = loaded_data["ASIN Trend (YTD)"]
+
+            if trend_df is not None and not trend_df.empty:
+                # 確認第一欄是 Child ASIN
+                if 'Child ASIN' not in trend_df.columns:
+                    # 假設第一欄是 ASIN
+                    trend_df.rename(columns={trend_df.columns[0]: 'Child ASIN'}, inplace=True)
+
+                # 取得所有月份欄位（排除 Child ASIN）
+                month_columns = [col for col in trend_df.columns if col != 'Child ASIN']
+
+                if month_columns:
+                    # 計算最新月份的銷售額（用於排序）
+                    latest_month = month_columns[-1]
+                    trend_df[f'{latest_month}_numeric'] = pd.to_numeric(trend_df[latest_month], errors='coerce').fillna(0)
+
+                    # 取得銷售前 3 名 ASIN
+                    top_3_asins = trend_df.nlargest(3, f'{latest_month}_numeric')['Child ASIN'].tolist()
+
+                    # ASIN 選擇器與趨勢圖（放在前面）
+                    st.markdown("**📈 銷售趨勢圖** （預設顯示：最新月份銷售前 3 名 ASIN）")
+
+                    # 多選框 - 預設選擇前 3 名
+                    selected_asins = st.multiselect(
+                        "選擇要顯示的 ASIN（可多選）",
+                        options=trend_df['Child ASIN'].tolist(),
+                        default=top_3_asins,
+                        key="asin_trend_selector"
+                    )
+
+                    if selected_asins:
+                        # 準備繪圖資料 - 轉換為 Long Format
+                        plot_data = []
+                        for asin in selected_asins:
+                            asin_row = trend_df[trend_df['Child ASIN'] == asin]
+                            if not asin_row.empty:
+                                for month in month_columns:
+                                    sales = pd.to_numeric(asin_row[month].iloc[0], errors='coerce')
+                                    if pd.notna(sales):
+                                        plot_data.append({
+                                            'Child ASIN': asin,
+                                            'Month': month,
+                                            'Sales': sales
+                                        })
+
+                        plot_df = pd.DataFrame(plot_data)
+
+                        if not plot_df.empty:
+                            import plotly.express as px
+
+                            # 繪製折線圖
+                            fig = px.line(
+                                plot_df,
+                                x='Month',
+                                y='Sales',
+                                color='Child ASIN',
+                                markers=True,
+                                title='ASIN 月度銷售趨勢',
+                                labels={'Sales': 'Ordered Product Sales ($)', 'Month': '月份'}
+                            )
+
+                            fig.update_layout(
+                                hovermode='x unified',
+                                legend=dict(
+                                    orientation="h",
+                                    yanchor="bottom",
+                                    y=1.02,
+                                    xanchor="right",
+                                    x=1
+                                )
+                            )
+
+                            fig.update_traces(
+                                hovertemplate='<b>%{fullData.name}</b><br>Sales: $%{y:,.2f}<extra></extra>'
+                            )
+
+                            st.plotly_chart(fig, use_container_width=True)
+                        else:
+                            st.warning("選擇的 ASIN 沒有有效的銷售資料")
+                    else:
+                        st.info("請選擇至少一個 ASIN 來顯示趨勢圖")
+
+                    # 顯示資料表（放在趨勢圖後面）
+                    st.markdown("---")
+                    st.markdown("**📊 月度銷售資料表**")
+                    st.dataframe(trend_df.drop(columns=[f'{latest_month}_numeric']), use_container_width=True, hide_index=True)
+                else:
+                    st.warning("檔案中沒有找到月份欄位")
+            else:
+                st.warning("無法載入趨勢資料或資料為空")
+        else:
+            st.info("""
+            📌 **如何使用 ASIN 趨勢分析：**
+
+            1. 使用油猴腳本的「📈 下載 ASIN 趨勢 (YTD)」按鈕下載趨勢資料
+            2. 前往 **Upload** 頁面上傳 ASIN Trend (YTD) 檔案
+            3. 資料會自動顯示在此區塊
+            """)
+
 # Advertising & Merchandising 區塊
 if "P0 MCID MBR" in loaded_data:
     st.markdown("---")

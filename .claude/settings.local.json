@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git checkout:*)",
+      "Bash(python reorganize_tabs.py:*)",
+      "Bash(python -m py_compile:*)",
+      "Bash(del reorganize_tabs.py)"
+    ]
+  }
+}

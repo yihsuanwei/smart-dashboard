@@ -13,6 +13,7 @@ FILE_TYPES = {
     "Total Year Change": "total_year_change",
     "Month YoY": "month_yoy",
     "Asin Report": "asin_report",
+    "ASIN Trend (YTD)": "asin_trend",
 }
 
 # 創建所有子資料夾
