@@ -1021,118 +1021,168 @@ if "Total Year Change" in loaded_data:
                     for month_idx, month in enumerate(all_months):
                         current_year_sales[month] = chart_data_dict[str(target_year)][month_idx]
 
-                    # 決定初始目標值：優先從儲存載入，否則智能分配
+                    # 全年 YoY 目標輸入
+                    # 從儲存的數據載入預設值
+                    saved_annual_target = None
+                    if current_file_key in all_targets:
+                        if str(target_year) in all_targets[current_file_key]:
+                            saved_annual_target = all_targets[current_file_key][str(target_year)].get('annual_yoy_target')
+
+                    annual_yoy_target = st.number_input(
+                        "全年 YoY 目標 (%)",
+                        min_value=-100.0,
+                        max_value=500.0,
+                        value=float(saved_annual_target) if saved_annual_target is not None else 30.0,
+                        step=1.0,
+                        key=f"annual_yoy_{target_year}",
+                        help="輸入全年 YoY 目標後，系統會智能分配到各月份"
+                    )
+
+                    # 基於全年目標進行智能分配
+                    allocated = smart_allocate(annual_yoy_target, previous_yoy_data)
+
+                    # 檢查是否有儲存的手動調整值
                     initial_targets = {}
+                    use_saved = False
                     if current_file_key in all_targets and str(target_year) in all_targets[current_file_key]:
-                        # 從儲存的檔案載入
-                        saved_targets = all_targets[current_file_key][str(target_year)].get('monthly_targets', {})
-                        if saved_targets:
-                            for month in all_months:
-                                if month in saved_targets:
-                                    initial_targets[month] = int(saved_targets[month]['target_yoy'])
-                                else:
-                                    initial_targets[month] = 0
+                        saved_data = all_targets[current_file_key][str(target_year)]
+                        # 只有當儲存的全年目標與當前輸入相同時，才使用儲存的月度數據
+                        if saved_data.get('annual_yoy_target') == int(annual_yoy_target):
+                            saved_targets = saved_data.get('monthly_targets', {})
+                            if saved_targets:
+                                for month in all_months:
+                                    if month in saved_targets:
+                                        initial_targets[month] = float(saved_targets[month]['target_yoy'])
+                                use_saved = True
 
-                    if not initial_targets:
-                        # 沒有儲存的數據，使用智能分配（預設全年目標30%）
-                        default_annual = 30
-                        allocated = smart_allocate(default_annual, previous_yoy_data)
-                        initial_targets = {m: int(round(v)) for m, v in allocated.items()}
+                    if not use_saved:
+                        # 使用智能分配的結果
+                        initial_targets = {m: round(v, 1) for m, v in allocated.items()}
 
-                    # 建立可編輯的 DataFrame
-                    # 使用轉置表格：月份為列，項目為行
-                    editable_data = []
+                    # 建立橫式表格 (月份為欄)
+                    rows_data = {}
 
+                    # 第1行: 月份
+                    rows_data['月份'] = all_months
+
+                    # 第2行: 前年 Sales
+                    rows_data['前年 Sales'] = []
                     for month in all_months:
                         prev_sales = prev_year_sales.get(month)
+                        rows_data['前年 Sales'].append(f'${int(prev_sales):,}' if prev_sales and pd.notna(prev_sales) else '-')
+
+                    # 第3行: 前年 YoY
+                    rows_data['前年 YoY'] = []
+                    for month in all_months:
                         prev_yoy = prev_year_yoy.get(month)
-                        target_yoy = initial_targets.get(month, 0)
-                        actual_sales = current_year_sales.get(month)
+                        rows_data['前年 YoY'].append(f'{prev_yoy:.2f}%' if prev_yoy and pd.notna(prev_yoy) else '-')
 
-                        # 計算預估 Sales
+                    # 第4行: 目標 YoY (%) - 可編輯，使用數值
+                    rows_data['目標 YoY (%)'] = [initial_targets.get(month, annual_yoy_target) for month in all_months]
+
+                    # 第5行: 預估 Sales
+                    rows_data['預估 Sales'] = []
+                    for month in all_months:
+                        prev_sales = prev_year_sales.get(month)
+                        target_yoy = initial_targets.get(month, annual_yoy_target)
                         if prev_sales and pd.notna(prev_sales):
-                            estimated_sales = int(prev_sales * (1 + target_yoy / 100))
+                            estimated = int(prev_sales * (1 + target_yoy / 100))
+                            rows_data['預估 Sales'].append(f'${estimated:,}')
                         else:
-                            estimated_sales = None
+                            rows_data['預估 Sales'].append('-')
 
-                        editable_data.append({
-                            '月份': month,
-                            '前年 Sales': int(prev_sales) if prev_sales and pd.notna(prev_sales) else None,
-                            '前年 YoY (%)': round(prev_yoy, 1) if prev_yoy and pd.notna(prev_yoy) else None,
-                            '目標 YoY (%)': target_yoy,
-                            '預估 Sales': estimated_sales,
-                            '實際 Sales': int(actual_sales) if actual_sales and pd.notna(actual_sales) else None
-                        })
+                    # 第6行: 實際 Sales
+                    rows_data['實際 Sales'] = []
+                    for month in all_months:
+                        actual_sales = current_year_sales.get(month)
+                        rows_data['實際 Sales'].append(f'${int(actual_sales):,}' if actual_sales and pd.notna(actual_sales) else '-')
 
-                    editable_df = pd.DataFrame(editable_data)
+                    # 轉置為橫式 DataFrame
+                    # 建立以項目為 index，月份為 columns 的 DataFrame
+                    display_df = pd.DataFrame({
+                        '項目': ['前年 Sales', '前年 YoY', '目標 YoY (%)', '預估 Sales', '實際 Sales']
+                    })
+                    for i, month in enumerate(all_months):
+                        display_df[month] = [
+                            rows_data['前年 Sales'][i],
+                            rows_data['前年 YoY'][i],
+                            rows_data['目標 YoY (%)'][i],
+                            rows_data['預估 Sales'][i],
+                            rows_data['實際 Sales'][i]
+                        ]
+
+                    # 建立可編輯的目標 YoY DataFrame (單獨一行)
+                    editable_row = {'項目': '目標 YoY (%)'}
+                    for i, month in enumerate(all_months):
+                        editable_row[month] = initial_targets.get(month, annual_yoy_target)
+
+                    editable_df = pd.DataFrame([editable_row])
 
                     # 設定欄位配置
-                    column_config = {
-                        '月份': st.column_config.TextColumn('月份', disabled=True, width='small'),
-                        '前年 Sales': st.column_config.NumberColumn(
-                            '前年 Sales',
-                            disabled=True,
-                            format='$%d'
-                        ),
-                        '前年 YoY (%)': st.column_config.NumberColumn(
-                            '前年 YoY (%)',
-                            disabled=True,
-                            format='%.1f%%',
-                            help='前一年的 YoY 變化（參考用）'
-                        ),
-                        '目標 YoY (%)': st.column_config.NumberColumn(
-                            '目標 YoY (%)',
-                            min_value=-100,
-                            max_value=500,
-                            step=1,
-                            format='%d%%',
-                            help='可直接編輯目標 YoY 百分比'
-                        ),
-                        '預估 Sales': st.column_config.NumberColumn(
-                            '預估 Sales',
-                            disabled=True,
-                            format='$%d',
-                            help='根據目標 YoY 計算'
-                        ),
-                        '實際 Sales': st.column_config.NumberColumn(
-                            '實際 Sales',
-                            disabled=True,
-                            format='$%d'
+                    column_config = {'項目': st.column_config.TextColumn('項目', disabled=True, width='medium')}
+                    for month in all_months:
+                        column_config[month] = st.column_config.NumberColumn(
+                            month,
+                            min_value=-100.0,
+                            max_value=500.0,
+                            step=0.1,
+                            format='%.1f'
                         )
-                    }
 
-                    st.caption("💡 智能分配：有前年 YoY 參考的月份依比例分配，無參考數據的月份使用平均值。可直接在「目標 YoY (%)」欄位編輯。")
+                    st.caption("💡 智能分配：有前年 YoY 參考的月份依比例分配，無參考數據的月份使用全年平均值。可直接編輯下方「目標 YoY (%)」欄位。")
 
-                    # 使用 data_editor 顯示可編輯表格
+                    # 顯示唯讀的參考資料行 (前年 Sales, 前年 YoY)
+                    ref_df = display_df[display_df['項目'].isin(['前年 Sales', '前年 YoY'])]
+                    st.dataframe(ref_df, use_container_width=True, hide_index=True)
+
+                    # 顯示可編輯的目標 YoY 行
                     edited_df = st.data_editor(
                         editable_df,
                         column_config=column_config,
                         use_container_width=True,
                         hide_index=True,
                         num_rows='fixed',
-                        key=f"target_editor_{target_year}"
+                        key=f"target_editor_{target_year}_{int(annual_yoy_target)}"
                     )
 
                     # 從編輯後的 DataFrame 提取目標值
                     edited_targets = {}
-                    for idx, row in edited_df.iterrows():
-                        month = row['月份']
-                        edited_targets[month] = int(row['目標 YoY (%)'])
+                    for month in all_months:
+                        edited_targets[month] = float(edited_df[month].iloc[0])
 
-                    # 重新計算預估 Sales（基於編輯後的目標）
-                    recalculated_estimates = []
+                    # 計算預估 Sales 和實際 Sales 的顯示行
+                    result_rows = []
+
+                    # 預估 Sales 行
+                    est_row = {'項目': '預估 Sales'}
                     for month in all_months:
                         prev_sales = prev_year_sales.get(month)
                         target_yoy = edited_targets[month]
                         if prev_sales and pd.notna(prev_sales):
                             estimated = int(prev_sales * (1 + target_yoy / 100))
-                            recalculated_estimates.append(estimated)
+                            est_row[month] = f'${estimated:,}'
                         else:
-                            recalculated_estimates.append(None)
+                            est_row[month] = '-'
+                    result_rows.append(est_row)
+
+                    # 實際 Sales 行
+                    actual_row = {'項目': '實際 Sales'}
+                    for month in all_months:
+                        actual_sales = current_year_sales.get(month)
+                        actual_row[month] = f'${int(actual_sales):,}' if actual_sales and pd.notna(actual_sales) else '-'
+                    result_rows.append(actual_row)
+
+                    result_df = pd.DataFrame(result_rows)
+                    st.dataframe(result_df, use_container_width=True, hide_index=True)
 
                     # 計算統計數據
                     calculated_annual_target = sum(edited_targets.values()) / len(edited_targets)
-                    total_estimated = sum(e for e in recalculated_estimates if e is not None)
+                    total_estimated = 0
+                    for month in all_months:
+                        prev_sales = prev_year_sales.get(month)
+                        target_yoy = edited_targets[month]
+                        if prev_sales and pd.notna(prev_sales):
+                            total_estimated += int(prev_sales * (1 + target_yoy / 100))
                     total_prev_sales = sum(int(v) for v in prev_year_sales.values() if v and pd.notna(v))
 
                     st.caption(f"📊 各月平均 YoY: **{calculated_annual_target:.1f}%** | 預估年度總額: **${total_estimated:,}** (前年: ${total_prev_sales:,})")
@@ -1159,12 +1209,12 @@ if "Total Year Change" in loaded_data:
                                     estimated_sales = int(prev_sales * (1 + target_yoy / 100))
 
                                 monthly_targets[month] = {
-                                    'target_yoy': int(target_yoy),
+                                    'target_yoy': float(target_yoy),
                                     'estimated_sales': estimated_sales
                                 }
 
                             all_targets[current_file_key][str(target_year)] = {
-                                'annual_yoy_target': int(calculated_annual_target),
+                                'annual_yoy_target': int(annual_yoy_target),
                                 'monthly_targets': monthly_targets,
                                 'modified_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                             }
