@@ -11,7 +11,6 @@ FILE_TYPES = {
     "P0 MCID MBR": "p0_mcid_mbr",
     "Sales Traffic Report": "sales_traffic_report",
     "Total Year Change": "total_year_change",
-    "Month YoY": "month_yoy",
     "Asin Report": "asin_report",
     "ASIN Trend (YTD)": "asin_trend",
 }

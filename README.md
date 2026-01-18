@@ -4,7 +4,7 @@
 
 ## 🎯 功能特色
 
-✅ **多檔案類型支援** - 支援 6 種業務檔案類型分類管理（P0 MCID MBR、Sales Traffic Report、Total Year Change、Month YoY、Asin Report、ASIN Trend (YTD)）
+✅ **多檔案類型支援** - 支援 5 種業務檔案類型分類管理（P0 MCID MBR、Sales Traffic Report、Total Year Change、Asin Report、ASIN Trend (YTD)）
 ✅ **智能檔案分類** - 自動分類存儲不同類型的業務數據
 ✅ **綜合分析儀表板** - Performance Dashboard 多維度績效分析（銷售、廣告、ASIN）
 ✅ **客戶指標追蹤** - Metrics Tracker 支援多年度趨勢對比與自訂指標
@@ -59,7 +59,6 @@ smart_dashboard_20260112/
     ├── p0_mcid_mbr/             # P0 MCID MBR 檔案
     ├── sales_traffic_report/    # 銷售流量報告
     ├── total_year_change/       # 年度變化數據
-    ├── month_yoy/               # 月度同比數據
     ├── asin_report/             # 商品層級報告
     └── asin_trend/              # ASIN 趨勢資料 (YTD)
 ```
@@ -105,7 +104,6 @@ smart_dashboard_20260112/
    - **P0 MCID MBR** - 請對應 Raw data 檔名
    - **Sales Traffic Report** - 請對應 Raw data 檔名
    - **Total Year Change** - 請對應 Raw data 檔名
-   - **Month YoY** - 請對應 Raw data 檔名
    - **Asin Report** - 請對應 Raw data 檔名
    - **ASIN Trend (YTD)** - ASIN 月度銷售趨勢資料
    
@@ -119,16 +117,15 @@ smart_dashboard_20260112/
 
 **⚠️ 使用前準備：**
 1. **先前往「Upload」頁面上傳所需檔案**
-2. **確保已上傳 6 種不同類型的檔案**：
+2. **確保已上傳 5 種不同類型的檔案**：
    - Sales Traffic Report
    - Total Year Change
-   - Month YoY
    - P0 MCID MBR
    - Asin Report
    - ASIN Trend (YTD)（可選，用於 ASIN 趨勢分析）
 
 **📊 分析步驟：**
-1. **選擇多檔案**：從已上傳的檔案中選擇 6 種不同類型
+1. **選擇多檔案**：從已上傳的檔案中選擇 5 種不同類型
 
    💡 **Raw Data 下載準備**：使用 Tampermonkey 腳本下載原始數據
 
@@ -177,8 +174,10 @@ smart_dashboard_20260112/
        - 支援熱力圖視覺化（不同指標使用不同顏色系統）
        - 自動標示 WOC (Weeks of Coverage) 警示（≤4週顯示粉紅底紅字，>8週顯示紅字）
    - **Tab 2 - 趨勢分析**（需上傳 ASIN Trend (YTD) 檔案）：
-     - **ASIN 銷售趨勢圖**：預設顯示最新月份銷售前 3 名 ASIN
-     - 支援多選 ASIN 顯示趨勢對比
+     - **TOP 10 排行表格**：並排顯示「最新月份 TOP 10」與「YTD TOP 10」ASIN 及銷售額
+     - **預設顯示模式切換**：可選擇「最新月份 TOP 3」或「YTD TOP 3」作為預設顯示
+     - **ASIN 銷售趨勢圖**：支援多選 ASIN 顯示趨勢對比
+     - **對數刻度選項**：當 ASIN 銷售額差異大時，可開啟 Log Scale 讓所有趨勢線更清晰
      - **月度銷售資料表**：顯示各 ASIN 的月度銷售數據
 
 ### 📈 Metrics Tracker 使用流程
@@ -570,7 +569,6 @@ uploaded_data/                     # 數據存儲目錄
 ├── p0_mcid_mbr/                   # P0 MCID MBR 檔案
 ├── sales_traffic_report/          # 銷售流量報告
 ├── total_year_change/             # 年度變化數據
-├── month_yoy/                     # 月度同比數據
 ├── asin_report/                   # 商品層級報告
 └── asin_trend/                    # ASIN 趨勢資料 (YTD)
 ```
@@ -603,11 +601,35 @@ uploaded_data/                     # 數據存儲目錄
 
 ---
 
-**版本 3.1** | **更新日期：2026-01-16** | **績效追蹤與賣家查找強化版**
+**版本 3.2.2** | **更新日期：2026-01-18** | **ASIN 趨勢分析強化版**
 
 ---
 
 ## 🆕 版本更新歷史
+
+### 版本 3.2.2 (2026-01-18)
+
+**📦 ASIN Level - 趨勢分析強化**
+- **新增 TOP 10 排行表格**：在趨勢圖上方並排顯示兩個表格
+  - 📊 最新月份 TOP 10：顯示當月銷售額最高的 10 個 ASIN
+  - 🏆 YTD TOP 10：顯示年度累計銷售額最高的 10 個 ASIN
+- **預設顯示模式切換**：Radio Button 可選擇「最新月份 TOP 3」或「YTD TOP 3」
+  - 兩種模式都預設顯示 3 個 ASIN，避免圖表過於複雜
+- **新增對數刻度選項**：Checkbox 可切換 Y 軸為 Log Scale
+  - 解決 ASIN 銷售額差異過大導致趨勢線被壓平的問題
+  - 對數刻度下所有 ASIN 趨勢都能清晰可見
+
+### 版本 3.2.1 (2026-01-18)
+
+**📊 Performance Dashboard - Actual/Forecast 表格增強**
+- **新增前年資料行**：Actual 和 Forecast 表格新增前年（如 2024）Sales 資料行
+  - 現在可同時查看三年數據：前年 → 去年 → 今年
+  - 便於長期趨勢比較分析
+
+**🗑️ 移除未使用功能**
+- **移除 Month YoY 檔案類型**：此功能無實際資料處理邏輯，已從系統中移除
+  - 檔案類型從 6 種調整為 5 種
+  - UI 欄位配置從 3+3 調整為 3+2
 
 ### 版本 3.2.0 (2026-01-16)
 

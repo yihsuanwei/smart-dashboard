@@ -1,5 +1,5 @@
 import streamlit as st
-from utils import list_uploaded_files, load_data
+from utils import list_uploaded_files, load_data, normalize_customer_id
 import plotly.graph_objects as go
 
 
@@ -19,13 +19,44 @@ def render_kpi(title, value, yoy=None, mom=None):
     mom_html = format_change(mom)
 
     st.markdown(f"""
-    <div style=\"
-        border:1px solid #e0e0e0; border-radius:10px; padding:15px;
-        background-color:white; box-shadow:0 2px 5px rgba(0,0,0,0.05);
-        text-align:left; height:120px;\">
-      <div style=\"font-size:17px; color:#555;\">{title}</div>
-      <div style=\"font-size:32px; font-weight:700; margin:5px 0;\">{value:,.0f}</div>
-      <div style=\"font-size:15px; color:#888;\">
+    <style>
+    .metrics-kpi-widget {{
+        border: 1px solid #e0e0e0;
+        border-radius: 10px;
+        padding: 15px;
+        background-color: white;
+        box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+        text-align: left;
+        height: 120px;
+        overflow: hidden;
+    }}
+    .metrics-kpi-title {{
+        font-size: clamp(12px, 1.5vw, 17px);
+        color: #555;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }}
+    .metrics-kpi-value {{
+        font-size: clamp(20px, 2.8vw, 32px);
+        font-weight: 700;
+        margin: 5px 0;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }}
+    .metrics-kpi-change {{
+        font-size: clamp(11px, 1.3vw, 15px);
+        color: #888;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }}
+    </style>
+    <div class="metrics-kpi-widget">
+      <div class="metrics-kpi-title">{title}</div>
+      <div class="metrics-kpi-value">{value:,.0f}</div>
+      <div class="metrics-kpi-change">
         YoY {yoy_html} &nbsp;&nbsp; MoM {mom_html}
       </div>
     </div>
@@ -97,8 +128,14 @@ def show_customer_id_filter_tab(df, selected_file):
     if customer_input:
         ids = [x.strip() for x in customer_input.split(",") if x.strip()]
         if ids:
-            filtered_df = filtered_df[filtered_df['merchant_customer_id'].astype(str).isin(ids)]
-            chart_df = chart_df[chart_df['merchant_customer_id'].astype(str).isin(ids)]
+            # 正規化 merchant_customer_id 欄位（處理浮點數格式如 587171716002.0 -> 587171716002）
+            filtered_df['_normalized_mcid'] = normalize_customer_id(filtered_df['merchant_customer_id'])
+            chart_df['_normalized_mcid'] = normalize_customer_id(chart_df['merchant_customer_id'])
+            filtered_df = filtered_df[filtered_df['_normalized_mcid'].isin(ids)]
+            chart_df = chart_df[chart_df['_normalized_mcid'].isin(ids)]
+            # 移除暫時欄位
+            filtered_df = filtered_df.drop(columns=['_normalized_mcid'])
+            chart_df = chart_df.drop(columns=['_normalized_mcid'])
             has_filter_input = True
         else:
             st.warning("請輸入有效的Customer ID")

@@ -57,18 +57,20 @@ def render_kpi_widget(title, value, yoy_pct=None, mom_pct=None, prefix="", suffi
     .kpi-widget {{
         border:1px solid #e0e0e0;
         border-radius:10px;
-        padding:15px;
+        padding: 10px 12px;
         background-color:white;
         box-shadow:0 2px 5px rgba(0,0,0,0.05);
         text-align:center;
-        height:120px;
+        min-height: 90px;
         display:flex;
         flex-direction:column;
         justify-content:center;
+        gap: 2px;
         transition: all 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
         cursor: pointer;
         z-index: 1;
         position: relative;
+        overflow: visible;
     }}
     .kpi-widget:hover {{
         transform: translateY(-20px) scale(1.15);
@@ -76,6 +78,33 @@ def render_kpi_widget(title, value, yoy_pct=None, mom_pct=None, prefix="", suffi
         z-index: 999;
         border-color: #FF9900;
         border-width: 2px;
+    }}
+    .kpi-title {{
+        font-size: clamp(11px, 1.4vw, 17px);
+        color: #555;
+        margin-bottom: 2px;
+        white-space: nowrap;
+        overflow: visible;
+        position: relative;
+        line-height: 1.2;
+    }}
+    .kpi-value {{
+        font-size: clamp(16px, 2.2vw, 28px);
+        font-weight: 700;
+        margin: 2px 0;
+        color: #000;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        line-height: 1.2;
+    }}
+    .kpi-change {{
+        font-size: clamp(9px, 1.1vw, 13px);
+        color: #888;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        line-height: 1.2;
     }}
     .info-tooltip {{
         display: inline-block;
@@ -133,9 +162,9 @@ def render_kpi_widget(title, value, yoy_pct=None, mom_pct=None, prefix="", suffi
     }}
     </style>
     <div class="kpi-widget">
-      <div style="font-size:17px; color:#555; margin-bottom:5px;">{title_with_help}</div>
-      <div style="font-size:28px; font-weight:700; margin:5px 0; color:#000;">{prefix}{formatted_value}{suffix}</div>
-      <div style="font-size:13px; color:#888;">
+      <div class="kpi-title">{title_with_help}</div>
+      <div class="kpi-value">{prefix}{formatted_value}{suffix}</div>
+      <div class="kpi-change">
         YoY {yoy_html} | MoM {mom_html}
       </div>
     </div>
@@ -156,25 +185,27 @@ def render_kpi_widget_with_percentage(title, value, percentage, yoy_pct=None, mo
 
     yoy_html = format_change(yoy_pct)
     mom_html = format_change(mom_pct)
-    formatted_value = f"${round(value):,} <span style='font-size:17px; color:#888'>({percentage:.0f}%)</span>"
+    formatted_value = f"${round(value):,} <span class='kpi-pct-inline'>({percentage:.0f}%)</span>"
 
     st.markdown(f"""
     <style>
     .kpi-widget-with-percentage {{
         border:1px solid #e0e0e0;
         border-radius:10px;
-        padding:15px;
+        padding: 10px 12px;
         background-color:white;
         box-shadow:0 2px 5px rgba(0,0,0,0.05);
         text-align:center;
-        height:120px;
+        min-height: 90px;
         display:flex;
         flex-direction:column;
         justify-content:center;
+        gap: 2px;
         transition: all 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
         cursor: pointer;
         z-index: 1;
         position: relative;
+        overflow: visible;
     }}
     .kpi-widget-with-percentage:hover {{
         transform: translateY(-20px) scale(1.15);
@@ -183,11 +214,42 @@ def render_kpi_widget_with_percentage(title, value, percentage, yoy_pct=None, mo
         border-color: #FF9900;
         border-width: 2px;
     }}
+    .kpi-widget-with-percentage .kpi-title {{
+        font-size: clamp(11px, 1.4vw, 17px);
+        color: #555;
+        margin-bottom: 2px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        line-height: 1.2;
+    }}
+    .kpi-widget-with-percentage .kpi-value {{
+        font-size: clamp(16px, 2.2vw, 28px);
+        font-weight: 700;
+        margin: 2px 0;
+        color: #000;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        line-height: 1.2;
+    }}
+    .kpi-widget-with-percentage .kpi-change {{
+        font-size: clamp(9px, 1.1vw, 13px);
+        color: #888;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        line-height: 1.2;
+    }}
+    .kpi-pct-inline {{
+        font-size: clamp(10px, 1.3vw, 17px);
+        color: #888;
+    }}
     </style>
     <div class="kpi-widget-with-percentage">
-      <div style="font-size:17px; color:#555; margin-bottom:5px;">{title}</div>
-      <div style="font-size:28px; font-weight:700; margin:5px 0; color:#000;">{formatted_value}</div>
-      <div style="font-size:13px; color:#888;">
+      <div class="kpi-title">{title}</div>
+      <div class="kpi-value">{formatted_value}</div>
+      <div class="kpi-change">
         YoY {yoy_html} | MoM {mom_html}
       </div>
     </div>
@@ -417,12 +479,12 @@ st.title("📊 Performance Dashboard")
 st.markdown("<div style='margin: 40px 0;'></div>", unsafe_allow_html=True)
 
 # 定義五種文件類型
-file_types = ["Sales Traffic Report", "Total Year Change", "Month YoY", "P0 MCID MBR", "Asin Report", "ASIN Trend (YTD)"]
+file_types = ["Sales Traffic Report", "Total Year Change", "P0 MCID MBR", "Asin Report", "ASIN Trend (YTD)"]
 
-# 創建六個欄位來顯示不同的文件選擇器
+# 創建欄位來顯示不同的文件選擇器（3 + 2 排版）
 col1, col2, col3 = st.columns(3)
-col4, col5, col6 = st.columns(3)
-columns = [col1, col2, col3, col4, col5, col6]
+col4, col5 = st.columns([1, 1])
+columns = [col1, col2, col3, col4, col5]
 
 # 初始化 session_state 來保存數據
 if 'multi_file_selected_files' not in st.session_state:
@@ -923,6 +985,18 @@ if "Total Year Change" in loaded_data:
 
                     actual_rows = []
 
+                    # 前年 Sales (year_before_last)
+                    if year_before_last:
+                        row_year_before_last = {'項目': f'{year_before_last} Sales'}
+                        for month in all_months:
+                            val = year_before_last_sales.get(month)
+                            row_year_before_last[month] = f'${int(val):,}' if val and pd.notna(val) else '-'
+                        year_before_last_sum = calc_sum(year_before_last_sales)
+                        year_before_last_avg = calc_avg(year_before_last_sales)
+                        row_year_before_last['Sum'] = f'${int(year_before_last_sum):,}' if year_before_last_sum else '-'
+                        row_year_before_last['Avg.'] = f'${int(year_before_last_avg):,}' if year_before_last_avg else '-'
+                        actual_rows.append(row_year_before_last)
+
                     # 去年 Sales
                     row_last_year = {'項目': f'{last_year} Sales'}
                     for month in all_months:
@@ -990,6 +1064,18 @@ if "Total Year Change" in loaded_data:
 
                     # 建立目標設定表格數據
                     target_rows = []
+
+                    # 前年 Sales (參考用)
+                    if year_before_last:
+                        row_year_before_last_ref = {'項目': f'{year_before_last} Sales'}
+                        for month in all_months:
+                            val = year_before_last_sales.get(month)
+                            row_year_before_last_ref[month] = f'${int(val):,}' if val and pd.notna(val) else '-'
+                        year_before_last_sum = calc_sum(year_before_last_sales)
+                        year_before_last_avg = calc_avg(year_before_last_sales)
+                        row_year_before_last_ref['Sum'] = f'${int(year_before_last_sum):,}' if year_before_last_sum else '-'
+                        row_year_before_last_ref['Avg.'] = f'${int(year_before_last_avg):,}' if year_before_last_avg else '-'
+                        target_rows.append(row_year_before_last_ref)
 
                     # 去年 Sales (參考用)
                     row_last_year_ref = {'項目': f'{last_year} Sales'}
@@ -2350,25 +2436,67 @@ if "Asin Report" in loaded_data:
                     # 假設第一欄是 ASIN
                     trend_df.rename(columns={trend_df.columns[0]: 'Child ASIN'}, inplace=True)
 
-                # 取得所有月份欄位（排除 Child ASIN）
-                month_columns = [col for col in trend_df.columns if col != 'Child ASIN']
+                # 取得所有月份欄位（只保留符合日期格式的欄位，如 2025-01）
+                import re
+                month_pattern = re.compile(r'^\d{4}-\d{2}$')  # 匹配 YYYY-MM 格式
+                month_columns = [col for col in trend_df.columns
+                                if month_pattern.match(str(col))]
 
                 if month_columns:
                     # 計算最新月份的銷售額（用於排序）
                     latest_month = month_columns[-1]
-                    trend_df[f'{latest_month}_numeric'] = pd.to_numeric(trend_df[latest_month], errors='coerce').fillna(0)
+                    trend_df['_latest_numeric'] = pd.to_numeric(trend_df[latest_month], errors='coerce').fillna(0)
 
-                    # 取得銷售前 3 名 ASIN
-                    top_3_asins = trend_df.nlargest(3, f'{latest_month}_numeric')['Child ASIN'].tolist()
+                    # 計算 YTD 總銷售額
+                    trend_df['_ytd_total'] = trend_df[month_columns].apply(
+                        lambda row: pd.to_numeric(row, errors='coerce').sum(), axis=1
+                    )
+
+                    # 取得最新月份 TOP 10 ASIN（用於表格顯示）
+                    top_10_latest_df = trend_df.nlargest(10, '_latest_numeric')[['Child ASIN', latest_month]].copy()
+                    top_10_latest_df.columns = ['ASIN', 'Sales']
+                    top_10_latest_df['Sales'] = top_10_latest_df['Sales'].apply(lambda x: f"${x:,.0f}" if pd.notna(x) else "-")
+
+                    # 取得 YTD TOP 10 ASIN（用於表格顯示）
+                    top_10_ytd_df = trend_df.nlargest(10, '_ytd_total')[['Child ASIN', '_ytd_total']].copy()
+                    top_10_ytd_df.columns = ['ASIN', 'Sales']
+                    top_10_ytd_df['Sales'] = top_10_ytd_df['Sales'].apply(lambda x: f"${x:,.0f}" if pd.notna(x) else "-")
+
+                    # 預設顯示的 ASIN（兩種模式都只取前 3 名）
+                    top_3_latest = trend_df.nlargest(3, '_latest_numeric')['Child ASIN'].tolist()
+                    top_3_ytd = trend_df.nlargest(3, '_ytd_total')['Child ASIN'].tolist()
 
                     # ASIN 選擇器與趨勢圖（放在前面）
-                    st.markdown("**📈 銷售趨勢圖** （預設顯示：最新月份銷售前 3 名 ASIN）")
+                    st.markdown("**📈 銷售趨勢圖**")
 
-                    # 多選框 - 預設選擇前 3 名
+                    # 預設顯示模式切換
+                    default_mode = st.radio(
+                        "預設顯示模式",
+                        ["最新月份 TOP 3", "YTD TOP 3"],
+                        horizontal=True,
+                        key="asin_default_mode"
+                    )
+
+                    # 顯示 TOP 10 表格（並排）
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.markdown(f"**📊 最新月份 TOP 10** ({latest_month})")
+                        st.dataframe(top_10_latest_df, use_container_width=True, hide_index=True)
+                    with col2:
+                        st.markdown("**🏆 YTD TOP 10**")
+                        st.dataframe(top_10_ytd_df, use_container_width=True, hide_index=True)
+
+                    # 根據模式決定預設 ASIN（都只選 3 個）
+                    if default_mode == "最新月份 TOP 3":
+                        default_asins = top_3_latest
+                    else:
+                        default_asins = top_3_ytd
+
+                    # 多選框 - 根據選擇的模式預設 ASIN
                     selected_asins = st.multiselect(
                         "選擇要顯示的 ASIN（可多選）",
                         options=trend_df['Child ASIN'].tolist(),
-                        default=top_3_asins,
+                        default=default_asins,
                         key="asin_trend_selector"
                     )
 
@@ -2381,16 +2509,25 @@ if "Asin Report" in loaded_data:
                                 for month in month_columns:
                                     sales = pd.to_numeric(asin_row[month].iloc[0], errors='coerce')
                                     if pd.notna(sales):
+                                        # 對數刻度時，將 0 轉為 None 讓線條跳過該點
                                         plot_data.append({
                                             'Child ASIN': asin,
                                             'Month': month,
-                                            'Sales': sales
+                                            'Sales': sales if sales > 0 else None
                                         })
 
                         plot_df = pd.DataFrame(plot_data)
 
                         if not plot_df.empty:
                             import plotly.express as px
+
+                            # Y軸刻度選項
+                            use_log_scale = st.checkbox(
+                                "使用對數刻度 (Log Scale)",
+                                value=True,
+                                help="當 ASIN 銷售額差異大時，使用對數刻度可讓所有趨勢線更清晰可見",
+                                key="asin_trend_log_scale"
+                            )
 
                             # 繪製折線圖
                             fig = px.line(
@@ -2400,7 +2537,8 @@ if "Asin Report" in loaded_data:
                                 color='Child ASIN',
                                 markers=True,
                                 title='ASIN 月度銷售趨勢',
-                                labels={'Sales': 'Ordered Product Sales ($)', 'Month': '月份'}
+                                labels={'Sales': 'Ordered Product Sales ($)', 'Month': '月份'},
+                                log_y=use_log_scale
                             )
 
                             fig.update_layout(
@@ -2415,7 +2553,8 @@ if "Asin Report" in loaded_data:
                             )
 
                             fig.update_traces(
-                                hovertemplate='<b>%{fullData.name}</b><br>Sales: $%{y:,.2f}<extra></extra>'
+                                hovertemplate='<b>%{fullData.name}</b><br>Sales: $%{y:,.2f}<extra></extra>',
+                                connectgaps=True  # 跳過 0 值點，連接前後資料
                             )
 
                             st.plotly_chart(fig, use_container_width=True)
@@ -2427,7 +2566,15 @@ if "Asin Report" in loaded_data:
                     # 顯示資料表（放在趨勢圖後面）
                     st.markdown("---")
                     st.markdown("**📊 月度銷售資料表**")
-                    st.dataframe(trend_df.drop(columns=[f'{latest_month}_numeric']), use_container_width=True, hide_index=True)
+                    # 只顯示 Child ASIN 和月份欄位，排除所有輔助欄位
+                    display_columns = ['Child ASIN'] + month_columns
+                    display_df = trend_df[display_columns].copy()
+                    # 格式化月份欄位為 $xxx,xxx 格式
+                    for col in month_columns:
+                        display_df[col] = pd.to_numeric(display_df[col], errors='coerce').apply(
+                            lambda x: f"${x:,.0f}" if pd.notna(x) else "-"
+                        )
+                    st.dataframe(display_df, use_container_width=True, hide_index=True)
                 else:
                     st.warning("檔案中沒有找到月份欄位")
             else:
