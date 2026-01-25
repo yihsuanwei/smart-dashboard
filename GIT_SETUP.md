@@ -2,61 +2,90 @@
 
 ## 📋 目前狀態
 
-**Git 狀態問題**：`HEAD detached from a7fe202`
-- 目前不在任何 branch 上，需要先修正
-
-**待 commit 的變更**：
-- `README.md`
-- `pages/1_performance_dashboard.py`
-- `pages/2_metrics_tracker.py`
+✅ **已修正** (2026-01-25)
+- Git branch 已正確設定在 `main`
+- 所有變更已 commit
 
 ---
 
-## ✅ 安全性確認
+## 🔒 安全性說明（給主管看）
 
-你的 `.gitignore` 已正確設定，以下內容**不會被上傳**：
+### 一、什麼會被上傳到 GitHub？
 
-| 排除項目 | 說明 |
-|---------|------|
-| `/uploaded_data` | 所有客戶資料（CSV 檔案） |
-| `venv/` | Python 虛擬環境 |
-| `__pycache__/` | Python 快取 |
-| `.vscode/` | 編輯器設定 |
+| 類型 | 檔案 | 會上傳？ | 說明 |
+|------|------|:--------:|------|
+| 程式碼 | `*.py` | ✅ | 純邏輯，不含任何數據 |
+| 設定檔 | `requirements.txt` | ✅ | 套件清單 |
+| 文件 | `README.md` | ✅ | 使用說明 |
+| 啟動腳本 | `*.bat` | ✅ | Windows 批次檔 |
+| **客戶資料** | `uploaded_data/*` | ❌ | **被 .gitignore 排除** |
+| 虛擬環境 | `venv/` | ❌ | 被排除 |
+| 快取 | `__pycache__/` | ❌ | 被排除 |
 
-**結論**：上傳到 GitHub 是安全的，只有純程式碼會被追蹤。
+### 二、.gitignore 機制說明
+
+`.gitignore` 是 Git 的標準功能，用於指定哪些檔案/資料夾**永遠不會被追蹤**。
+
+本專案的 `.gitignore` 包含：
+```
+/uploaded_data
+```
+
+這代表：
+- ❌ `git add .` 不會加入 uploaded_data
+- ❌ `git commit` 不會包含 uploaded_data
+- ❌ `git push` 不會上傳 uploaded_data
+- ❌ GitHub 上看不到 uploaded_data
+
+### 三、驗證方式
+
+可以用以下指令確認哪些檔案會被追蹤：
+```bash
+git status
+```
+
+如果 `uploaded_data/` 裡有檔案，但 `git status` 沒有顯示它們，就代表 `.gitignore` 正常運作。
+
+### 四、Deploy 後的架構
+
+```
+GitHub / Deploy 伺服器          你的電腦 (Local)
+├── upload.py                   ├── upload.py
+├── pages/                      ├── pages/
+├── utils.py                    ├── utils.py
+├── requirements.txt            ├── requirements.txt
+├── uploaded_data/ (空的)       ├── uploaded_data/
+│   └── (無檔案)                │   ├── 客戶A.csv ← 只存在這裡
+│                               │   ├── 客戶B.csv ← 只存在這裡
+│                               │   └── ...
+```
+
+**結論**：
+- GitHub 上只有「空殼程式」
+- 客戶資料永遠只存在使用者自己的電腦
+- 每個使用者的資料互相獨立，不會互相看到
 
 ---
 
-## 🔧 修正步驟
+## 🚀 上傳到 GitHub 步驟
 
-### Step 1：修正 detached HEAD 狀態
-
-```bash
-cd smart_dashboard_20260121
-git checkout -b main
-```
-
-### Step 2：提交目前的變更
-
-```bash
-git add .
-git commit -m "Latest updates"
-```
-
-### Step 3：建立 GitHub Repository
+### Step 1：建立 GitHub Repository
 
 1. 前往 https://github.com/new
 2. Repository name: `smart-dashboard`（或你喜歡的名稱）
-3. 選擇 **Private**（私有）
-4. 不要勾選任何初始化選項
+3. 選擇 **Private**（私有）⚠️ 重要！
+4. **不要勾選**任何初始化選項（README、.gitignore、license 都不要勾）
 5. 點擊 **Create repository**
 
-### Step 4：連結並上傳
+### Step 2：連結並上傳
 
+在專案資料夾執行：
 ```bash
 git remote add origin https://github.com/你的帳號/smart-dashboard.git
 git push -u origin main
 ```
+
+首次 push 會要求登入 GitHub。
 
 ---
 
