@@ -394,7 +394,177 @@ git push
 
 ---
 
-### Q7: （在這裡繼續提問）
+### Q7: 同事首次設定 - 完整 SOP
+
+**前置條件**：同事的電腦需要安裝兩個東西
+
+---
+
+**Step 1：安裝 Git**
+
+1. 前往 https://git-scm.com/download/win
+2. 下載 「64-bit Git for Windows Setup」
+3. 執行安裝檔，**全部按 Next 到底**（不用改任何設定）
+4. 完成
+
+**如何確認安裝成功？**
+- 在任意資料夾空白處「右鍵」
+- 看到「Open Git Bash here」或「Git Bash Here」就是成功了
+
+---
+
+**Step 2：安裝 Python 3.13.2**
+
+（這步跟你的 README 一樣，同事應該已經會了）
+
+---
+
+**Step 3：Clone 專案**
+
+1. 在電腦上選一個想放專案的位置（例如桌面）
+2. 在該位置「右鍵」→「Open Git Bash here」
+3. 會跳出一個黑色視窗，輸入：
+   ```
+   git clone https://github.com/yihsuanwei/smart-dashboard.git
+   ```
+4. 按 Enter，等待下載完成
+5. 會出現一個 `smart-dashboard` 資料夾
+
+---
+
+**Step 4：安裝環境**
+
+1. 進入 `smart-dashboard` 資料夾
+2. 雙擊 `setup.bat`
+3. 等待安裝完成（約 2-3 分鐘）
+
+---
+
+**Step 5：日常使用**
+
+| 情境 | 動作 |
+|------|------|
+| 想用 Dashboard | 雙擊 `start.bat` |
+| 你說有更新 | 雙擊 `update.bat` |
+
+**就這樣，設定完之後只要記得兩個 bat 檔就好。**
+
+---
+
+### Q8: 你（開發者）更新程式碼的 SOP
+
+**每次改完 code 後，執行以下步驟：**
+
+---
+
+**方法 A：用 Kiro 的 Git 介面（推薦，最簡單）**
+
+看你截圖左邊的 CHANGES 面板：
+
+```
+1. 在 Message 欄位輸入這次改了什麼（例如：「修正 CVR 計算」）
+2. 點擊「✓ Commit」按鈕
+3. 點擊「...」→「Push」（或按 Ctrl+Shift+P 搜尋 Git Push）
+```
+
+---
+
+**方法 B：用指令（備用）**
+
+在專案資料夾開啟終端機，輸入：
+
+```bash
+git add .
+git commit -m "這次改了什麼"
+git push
+```
+
+---
+
+**如何確認有上傳成功？**
+
+1. 前往 https://github.com/yihsuanwei/smart-dashboard
+2. 看最上面的 commit 訊息是不是你剛剛寫的
+3. 看時間是不是剛剛
+
+---
+
+**完整流程圖：**
+
+```
+你改 code
+    ↓
+存檔
+    ↓
+Kiro 左邊 CHANGES 會顯示改了哪些檔案
+    ↓
+輸入 commit message → 點 Commit
+    ↓
+點 Push（或 Ctrl+Shift+P → Git Push）
+    ↓
+去 GitHub 網頁確認
+    ↓
+跟同事說：「更新了，雙擊 update.bat」
+```
+
+---
+
+### Q9: 同事已經有舊版資料夾，如何轉換成 Git 版本？
+
+**情境**：同事之前是你傳 zip 給他們，已經裝好環境可以跑了
+
+**問題**：他們的資料夾沒有連結到 GitHub，無法用 `git pull` 更新
+
+---
+
+**轉換步驟（同事只做一次）：**
+
+**Step 1：安裝 Git**（如果還沒裝）
+- 前往 https://git-scm.com/download/win
+- 下載安裝，全部按 Next
+
+**Step 2：備份客戶資料**
+- 把 `uploaded_data` 資料夾複製到桌面（暫存）
+
+**Step 3：刪除舊資料夾**
+- 把原本的 `smart_dashboard_xxxxx` 資料夾整個刪除
+
+**Step 4：Clone 新版本**
+- 在想放的位置「右鍵」→「Open Git Bash here」
+- 輸入：
+  ```
+  git clone https://github.com/yihsuanwei/smart-dashboard.git
+  ```
+
+**Step 5：還原客戶資料**
+- 把剛才備份的 `uploaded_data` 資料夾放回 `smart-dashboard` 裡面
+
+**Step 6：完成！**
+- 之後就可以用 `update.bat` 更新了
+- 不需要重新跑 `setup.bat`（venv 會重新建立，但 `update.bat` 會處理）
+
+---
+
+**注意**：Clone 下來的資料夾名稱會是 `smart-dashboard`（跟 GitHub repo 同名），不是原本的 `smart_dashboard_20260121`
+
+---
+
+**簡化版指令（給熟悉的同事）：**
+```bash
+# 1. 備份 uploaded_data
+# 2. 刪除舊資料夾
+# 3. Clone
+git clone https://github.com/yihsuanwei/smart-dashboard.git
+cd smart-dashboard
+# 4. 安裝環境
+setup.bat
+# 5. 把 uploaded_data 放回來
+# 6. 完成，之後用 update.bat
+```
+
+---
+
+### Q10: （在這裡繼續提問）
 
 <!-- 寫下你的問題 -->
 

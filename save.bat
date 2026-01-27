@@ -1,51 +1,50 @@
 @echo off
-chcp 65001 >nul
 echo ========================================
-echo   Smart Dashboard - 儲存變更到 GitHub
+echo   Smart Dashboard - Save to GitHub
 echo ========================================
 echo.
 
-echo [1/4] 檢查變更...
+echo [1/4] Checking changes...
 git status --short
 echo.
 
-set /p confirm="確定要儲存這些變更嗎？(Y/N): "
+set /p confirm="Save these changes? (Y/N): "
 if /i not "%confirm%"=="Y" (
-    echo 已取消
+    echo Cancelled
     pause
     exit /b 0
 )
 echo.
 
-echo [2/4] 加入變更...
+echo [2/4] Staging changes...
 git add -A
 echo.
 
-set /p msg="請輸入變更說明 (直接按 Enter 使用預設): "
+set /p msg="Enter commit message (press Enter for default): "
 if "%msg%"=="" set msg=Update Smart Dashboard
 
 echo.
-echo [3/4] 建立存檔點...
+echo [3/4] Creating commit...
 git commit -m "%msg%"
 if errorlevel 1 (
     echo.
-    echo 沒有變更需要儲存，或發生錯誤
+    echo No changes to save, or error occurred
     pause
     exit /b 1
 )
 echo.
 
-echo [4/4] 上傳到 GitHub...
+echo [4/4] Pushing to GitHub...
 git push
 if errorlevel 1 (
     echo.
-    echo 上傳失敗，請確認網路連線
+    echo Push failed - check your network connection
     pause
     exit /b 1
 )
 
 echo.
 echo ========================================
-echo   儲存完成！變更已上傳到 GitHub
+echo   Done! Changes uploaded to GitHub
 echo ========================================
 pause
