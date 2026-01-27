@@ -4,7 +4,7 @@
 
 ## 🎯 功能特色
 
-✅ **多檔案類型支援** - 支援 5 種業務檔案類型分類管理（P0 MCID MBR、Sales Traffic Report、Total Year Change、Asin Report、ASIN Trend (YTD)）
+✅ **多檔案類型支援** - 支援 4 種業務檔案類型分類管理（P0 MCID MBR、Sales Traffic Report、Asin Report、ASIN Trend (YTD)）
 ✅ **智能檔案分類** - 自動分類存儲不同類型的業務數據
 ✅ **綜合分析儀表板** - Performance Dashboard 多維度績效分析（銷售、廣告、ASIN）
 ✅ **客戶指標追蹤** - Metrics Tracker 支援多年度趨勢對比與自訂指標
@@ -58,7 +58,6 @@ smart_dashboard_20260112/
 └── uploaded_data/        # 分類上傳檔案目錄
     ├── p0_mcid_mbr/             # P0 MCID MBR 檔案
     ├── sales_traffic_report/    # 銷售流量報告
-    ├── total_year_change/       # 年度變化數據
     ├── asin_report/             # 商品層級報告
     └── asin_trend/              # ASIN 趨勢資料 (YTD)
 ```
@@ -102,11 +101,10 @@ smart_dashboard_20260112/
 1. 前往「Upload」頁面
 2. 選擇 CSV 檔案並選擇檔案類型 (測試的話可用 Sample raw data 的檔案)
    - **P0 MCID MBR** - 請對應 Raw data 檔名
-   - **Sales Traffic Report** - 請對應 Raw data 檔名
-   - **Total Year Change** - 請對應 Raw data 檔名
+   - **Sales Traffic Report** - 請對應 Raw data 檔名（Overall Sales Summary 會從此檔案動態計算）
    - **Asin Report** - 請對應 Raw data 檔名
    - **ASIN Trend (YTD)** - ASIN 月度銷售趨勢資料
-   
+
    提醒：一定要選擇正確、對應的檔案類型 
 3. 自訂檔名並選擇資料處理選項
 4. **點擊「上傳並處理」按鈕**
@@ -117,15 +115,14 @@ smart_dashboard_20260112/
 
 **⚠️ 使用前準備：**
 1. **先前往「Upload」頁面上傳所需檔案**
-2. **確保已上傳 5 種不同類型的檔案**：
-   - Sales Traffic Report
-   - Total Year Change
+2. **確保已上傳 4 種不同類型的檔案**：
+   - Sales Traffic Report（Overall Sales Summary 會從此檔案動態計算 YTD 指標）
    - P0 MCID MBR
    - Asin Report
    - ASIN Trend (YTD)（可選，用於 ASIN 趨勢分析）
 
 **📊 分析步驟：**
-1. **選擇多檔案**：從已上傳的檔案中選擇 5 種不同類型
+1. **選擇多檔案**：從已上傳的檔案中選擇 4 種不同類型
 
    💡 **Raw Data 下載準備**：使用 Tampermonkey 腳本下載原始數據
 
@@ -142,8 +139,9 @@ smart_dashboard_20260112/
    **📋 數據下載流程**：
    - 登入指定賣家 Amazon Seller Central → 切換英文介面 → 在 landing page 腳本即可啟用 → 一鍵下載 CSV → 檔案分類上傳
 
-2. **📈 Overall Sales Summary**：年度銷售概覽
-   - 顯示 YTD Sales、Total Order Items、Units Ordered、Average sales/order item 等關鍵 KPI
+2. **📈 Overall Sales Summary**：年度銷售概覽（從 Sales Traffic Report 動態計算）
+   - **年份選擇器**：可選擇查看不同年份的 YTD 數據
+   - 顯示 6 個關鍵 KPI（2 行 × 3 個）：YTD Sales、Total Order Items、Units Ordered、Sessions、AOV、CVR
    - 月度銷售趨勢圖（多年度對比），支援選擇顯示年份
    - **Actual 表格**：顯示實際銷售數據，YoY 正數綠字、負數紅字
    - **Forecast 表格**：年度銷售預測
@@ -200,7 +198,7 @@ smart_dashboard_20260112/
 
 4. **趨勢圖表**：
    - 選擇要顯示的業務指標（支援多選，不限數量）
-   - 年份控制：可選擇顯示 2024、2025 或兩者對比
+   - 年份控制：動態顯示資料中的可用年份（最多 6 年）
    - 每行顯示 2 個圖表，自動排版
    - 支援所有數值型欄位的趨勢分析
    - **智能數據分離**：圖表不受 Year/Month 篩選影響，保持完整趨勢
@@ -568,7 +566,6 @@ start.bat                          # Windows 啟動腳本
 uploaded_data/                     # 數據存儲目錄
 ├── p0_mcid_mbr/                   # P0 MCID MBR 檔案
 ├── sales_traffic_report/          # 銷售流量報告
-├── total_year_change/             # 年度變化數據
 ├── asin_report/                   # 商品層級報告
 └── asin_trend/                    # ASIN 趨勢資料 (YTD)
 ```
@@ -601,11 +598,29 @@ uploaded_data/                     # 數據存儲目錄
 
 ---
 
-**版本 3.2.2** | **更新日期：2026-01-18** | **ASIN 趨勢分析強化版**
+**版本 3.3.0** | **更新日期：2026-01-27** | **Overall Sales Summary 動態計算版**
 
 ---
 
 ## 🆕 版本更新歷史
+
+### 版本 3.3.0 (2026-01-27)
+
+**📊 Performance Dashboard - Overall Sales Summary 大改版**
+- **移除 Total Year Change 檔案類型**：不再需要上傳此檔案，改由 Sales Traffic Report 動態計算
+  - 檔案類型從 5 種調整為 4 種
+  - UI 欄位配置從 3+2 調整為 2+2
+- **新增年份選擇器**：可選擇查看不同年份的 YTD 數據
+  - 當年：採用 YTD 同期比較（截至今天）
+  - 歷史年份：採用全年加總比較
+- **KPI 擴充至 6 個**：新增 Sessions、AOV (Average Order Value)、CVR
+  - 排版從 1 行 4 個改為 2 行 × 3 個
+- **動態 YoY 計算**：根據選擇年份自動計算同期比較
+
+**📈 Metrics Tracker - 年份選擇增強**
+- **動態年份選擇**：從資料中自動讀取可用年份（最多支援 6 年）
+  - 不再固定為 2024/2025
+  - 每個年份使用不同配色，便於區分
 
 ### 版本 3.2.2 (2026-01-18)
 

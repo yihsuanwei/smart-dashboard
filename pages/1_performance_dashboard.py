@@ -256,41 +256,6 @@ def render_kpi_widget_with_percentage(title, value, percentage, yoy_pct=None, mo
     """, unsafe_allow_html=True)
 
 
-def extract_ytd_metric(df, column_keywords, row_keywords=['this year so far'], change_keywords=['change from last year']):
-    """
-    從 Total Year Change 數據中提取 YTD 指標
-
-    Args:
-        df: DataFrame
-        column_keywords: 要搜尋的欄位關鍵字列表（小寫）
-        row_keywords: YTD 行的關鍵字列表
-        change_keywords: 變化百分比行的關鍵字列表
-
-    Returns:
-        (value, change_pct): 數值和變化百分比
-    """
-    value = 0
-    change_pct = None
-
-    # 尋找目標欄位
-    target_cols = [col for col in df.columns if any(kw in col.lower() for kw in column_keywords)]
-
-    if target_cols:
-        target_col = target_cols[0]
-
-        # 尋找 YTD row
-        ytd_row = df[df.iloc[:, 0].astype(str).str.lower().str.contains('|'.join(row_keywords), na=False)]
-        if not ytd_row.empty and target_col in ytd_row.columns:
-            value = ytd_row[target_col].iloc[0]
-
-        # 尋找變化百分比
-        change_row = df[df.iloc[:, 0].astype(str).str.lower().str.contains('|'.join(change_keywords), na=False)]
-        if not change_row.empty and target_col in change_row.columns:
-            change_pct = change_row[target_col].iloc[0]
-
-    return value, change_pct
-
-
 def match_date(row_date, target_date):
     """日期匹配函數"""
     try:
@@ -478,13 +443,13 @@ st.title("📊 Performance Dashboard")
 # 增加空間
 st.markdown("<div style='margin: 40px 0;'></div>", unsafe_allow_html=True)
 
-# 定義五種文件類型
-file_types = ["Sales Traffic Report", "Total Year Change", "P0 MCID MBR", "Asin Report", "ASIN Trend (YTD)"]
+# 定義四種文件類型（移除 Total Year Change，改由 Sales Traffic Report 動態計算）
+file_types = ["Sales Traffic Report", "P0 MCID MBR", "Asin Report", "ASIN Trend (YTD)"]
 
-# 創建欄位來顯示不同的文件選擇器（3 + 2 排版）
-col1, col2, col3 = st.columns(3)
-col4, col5 = st.columns([1, 1])
-columns = [col1, col2, col3, col4, col5]
+# 創建欄位來顯示不同的文件選擇器（2 + 2 排版）
+col1, col2 = st.columns(2)
+col3, col4 = st.columns(2)
+columns = [col1, col2, col3, col4]
 
 # 初始化 session_state 來保存數據
 if 'multi_file_selected_files' not in st.session_state:
@@ -542,19 +507,52 @@ for i, file_type in enumerate(file_types):
 # 分隔線
 st.markdown("---")
 
-# Overall Sales Summary 區塊
-if "Total Year Change" in loaded_data:
-    st.header("📈 Overall Sales Summary")
+# Overall Sales Summary 區塊（從 Sales Traffic Report 動態計算）
+if "Sales Traffic Report" in loaded_data:
+    # 標題與年份選擇器並排
+    header_col, year_select_col = st.columns([3, 1])
+    with header_col:
+        st.header("📈 Overall Sales Summary")
 
-    sales_df = loaded_data["Total Year Change"]
+    # 從 Sales Traffic Report 取得可用年份
+    available_years = []
+    traffic_df = loaded_data["Sales Traffic Report"]
+    if 'Date' in traffic_df.columns:
+        try:
+            traffic_df_temp = traffic_df.copy()
+            traffic_df_temp['Date'] = pd.to_datetime(traffic_df_temp['Date'], format='%Y/%m/%d', errors='coerce')
+            available_years = sorted(traffic_df_temp['Date'].dt.year.dropna().unique().astype(int).tolist(), reverse=True)
+        except:
+            pass
 
-    # 創建四個 widget 欄位
-    widget_col1, widget_col2, widget_col3, widget_col4 = st.columns(4)
+    # 如果沒有可用年份，使用當前年份和前一年
+    if not available_years:
+        from datetime import datetime
+        current_year = datetime.now().year
+        available_years = [current_year, current_year - 1]
 
-    # 定義四個指標的配置
+    with year_select_col:
+        st.markdown("<div style='margin-top: 15px;'></div>", unsafe_allow_html=True)
+        selected_ytd_year = st.selectbox(
+            "選擇年份",
+            options=available_years,
+            index=0,
+            key="ytd_year_selector"
+        )
+
+    # 創建兩行 widget 欄位：第一行 3 個，第二行 3 個
+    widget_row1_col1, widget_row1_col2, widget_row1_col3 = st.columns(3)
+
+    # 行間距（與 Business Metrics 一致）
+    st.markdown("<div style='margin: 20px 0;'></div>", unsafe_allow_html=True)
+
+    widget_row2_col1, widget_row2_col2, widget_row2_col3 = st.columns(3)
+
+    # 定義六個指標的配置（第一行 3 個，第二行 3 個）
     ytd_metrics = [
+        # 第一行
         {
-            'column': widget_col1,
+            'column': widget_row1_col1,
             'title': 'YTD Sales',
             'keywords': ['ordered product sales'],
             'prefix': '$',
@@ -562,7 +560,7 @@ if "Total Year Change" in loaded_data:
             'help_text': 'YoY 計算採同期比較法：今年資料截至當前日期，去年則計算至相同日期，確保比較基準一致。\n\nYoY calculation uses same-period comparison: current year data up to today\'s date, compared with prior year data up to the same date.'
         },
         {
-            'column': widget_col2,
+            'column': widget_row1_col2,
             'title': 'YTD - Total Order Items',
             'keywords': ['total order items'],
             'prefix': '',
@@ -570,39 +568,152 @@ if "Total Year Change" in loaded_data:
             'help_text': 'YoY 計算採同期比較法：今年資料截至當前日期，去年則計算至相同日期，確保比較基準一致。\n\nYoY calculation uses same-period comparison: current year data up to today\'s date, compared with prior year data up to the same date.'
         },
         {
-            'column': widget_col3,
+            'column': widget_row1_col3,
             'title': 'YTD - Units Ordered',
             'keywords': ['units ordered'],
             'prefix': '',
             'decimal': False,
             'help_text': 'YoY 計算採同期比較法：今年資料截至當前日期，去年則計算至相同日期，確保比較基準一致。\n\nYoY calculation uses same-period comparison: current year data up to today\'s date, compared with prior year data up to the same date.'
         },
+        # 第二行
         {
-            'column': widget_col4,
-            'title': 'Average sales/order item',
-            'keywords': ['average sales/order item'],
+            'column': widget_row2_col1,
+            'title': 'YTD - Sessions',
+            'keywords': ['sessions - total'],
+            'prefix': '',
+            'decimal': False,
+            'help_text': 'YoY 計算採同期比較法：今年資料截至當前日期，去年則計算至相同日期，確保比較基準一致。\n\nYoY calculation uses same-period comparison: current year data up to today\'s date, compared with prior year data up to the same date.'
+        },
+        {
+            'column': widget_row2_col2,
+            'title': 'AOV (Average Order Value)',
+            'keywords': ['average order value'],
             'prefix': '$',
             'decimal': True,  # 需要保留兩位小數
-            'help_text': 'YoY 計算採同期比較法：今年資料截至當前日期，去年則計算至相同日期，確保比較基準一致。\n\nYoY calculation uses same-period comparison: current year data up to today\'s date, compared with prior year data up to the same date.'
+            'help_text': '平均訂單金額 = 銷售額 / 訂單數\nAOV = Ordered Product Sales / Total Order Items\n\nYoY 計算採同期比較法。'
+        },
+        {
+            'column': widget_row2_col3,
+            'title': 'CVR',
+            'keywords': ['cvr'],
+            'prefix': '',
+            'suffix': '%',
+            'decimal': True,  # 需要保留兩位小數
+            'cvr_mode': True,  # CVR 使用 bps 差值計算 YoY
+            'help_text': '轉換率 = 訂單數 / 瀏覽次數\nCVR = Total Order Items / Sessions × 100%\n\nYoY 變化以 bps（基點）表示。'
         }
     ]
 
-    # 批量渲染 YTD 指標
-    for metric in ytd_metrics:
-        with metric['column']:
-            value, change = extract_ytd_metric(sales_df, metric['keywords'])
-            # 根據配置決定是否保留小數
-            if isinstance(value, (int, float)):
-                value_rounded = round(value, 2) if metric.get('decimal', False) else round(value)
+    # 從 Sales Traffic Report 動態計算 YTD
+    from datetime import datetime
+    current_year = datetime.now().year
+
+    traffic_df = loaded_data["Sales Traffic Report"].copy()
+    if 'Date' in traffic_df.columns:
+        try:
+            traffic_df['Date'] = pd.to_datetime(traffic_df['Date'], format='%Y/%m/%d', errors='coerce')
+            traffic_df['Year'] = traffic_df['Date'].dt.year
+            traffic_df['DayOfYear'] = traffic_df['Date'].dt.dayofyear
+
+            # 根據選擇的年份決定計算邏輯
+            if selected_ytd_year == current_year:
+                # 當前年份：YTD 同期比較（截至今天）
+                today_day_of_year = datetime.now().timetuple().tm_yday
+                selected_year_df = traffic_df[(traffic_df['Year'] == selected_ytd_year) & (traffic_df['DayOfYear'] <= today_day_of_year)]
+                prior_year_df = traffic_df[(traffic_df['Year'] == selected_ytd_year - 1) & (traffic_df['DayOfYear'] <= today_day_of_year)]
             else:
-                value_rounded = value
-            render_kpi_widget(
-                metric['title'],
-                value_rounded,
-                change,
-                prefix=metric['prefix'],
-                help_text=metric.get('help_text')
-            )
+                # 歷史年份：全年加總比較
+                selected_year_df = traffic_df[traffic_df['Year'] == selected_ytd_year]
+                prior_year_df = traffic_df[traffic_df['Year'] == selected_ytd_year - 1]
+
+            # 欄位對照
+            metric_columns = {
+                'YTD Sales': 'Ordered Product Sales',
+                'YTD - Total Order Items': 'Total Order Items',
+                'YTD - Units Ordered': 'Units Ordered',
+                'YTD - Sessions': 'Sessions - Total',
+                'AOV (Average Order Value)': None,  # 需要計算：Sales / Total Order Items
+                'CVR': None  # 需要計算：Total Order Items / Sessions × 100%
+            }
+
+            for metric in ytd_metrics:
+                with metric['column']:
+                    col_name = metric_columns.get(metric['title'])
+
+                    if metric['title'] == 'AOV (Average Order Value)':
+                        # 計算平均訂單金額 = 銷售額 / 訂單數 (Total Order Items)
+                        sales_sum = selected_year_df['Ordered Product Sales'].apply(
+                            lambda x: float(str(x).replace('$', '').replace(',', '')) if pd.notna(x) else 0
+                        ).sum()
+                        orders_sum = selected_year_df['Total Order Items'].apply(
+                            lambda x: float(str(x).replace(',', '')) if pd.notna(x) else 0
+                        ).sum()
+                        value = sales_sum / orders_sum if orders_sum > 0 else 0
+
+                        # 計算去年同期
+                        prior_sales = prior_year_df['Ordered Product Sales'].apply(
+                            lambda x: float(str(x).replace('$', '').replace(',', '')) if pd.notna(x) else 0
+                        ).sum()
+                        prior_orders = prior_year_df['Total Order Items'].apply(
+                            lambda x: float(str(x).replace(',', '')) if pd.notna(x) else 0
+                        ).sum()
+                        prior_value = prior_sales / prior_orders if prior_orders > 0 else 0
+                    elif metric['title'] == 'CVR':
+                        # 計算轉換率 = 訂單數 / 瀏覽次數 × 100% (Total Order Items / Sessions)
+                        orders_sum = selected_year_df['Total Order Items'].apply(
+                            lambda x: float(str(x).replace(',', '')) if pd.notna(x) else 0
+                        ).sum()
+                        sessions_sum = selected_year_df['Sessions - Total'].apply(
+                            lambda x: float(str(x).replace(',', '')) if pd.notna(x) else 0
+                        ).sum()
+                        value = (orders_sum / sessions_sum * 100) if sessions_sum > 0 else 0
+
+                        # 計算去年同期
+                        prior_orders = prior_year_df['Total Order Items'].apply(
+                            lambda x: float(str(x).replace(',', '')) if pd.notna(x) else 0
+                        ).sum()
+                        prior_sessions = prior_year_df['Sessions - Total'].apply(
+                            lambda x: float(str(x).replace(',', '')) if pd.notna(x) else 0
+                        ).sum()
+                        prior_value = (prior_orders / prior_sessions * 100) if prior_sessions > 0 else 0
+                    elif col_name and col_name in selected_year_df.columns:
+                        # 清理並加總數值
+                        value = selected_year_df[col_name].apply(
+                            lambda x: float(str(x).replace('$', '').replace(',', '').replace('%', '')) if pd.notna(x) else 0
+                        ).sum()
+                        prior_value = prior_year_df[col_name].apply(
+                            lambda x: float(str(x).replace('$', '').replace(',', '').replace('%', '')) if pd.notna(x) else 0
+                        ).sum()
+                    else:
+                        value = 0
+                        prior_value = 0
+
+                    # 計算 YoY 變化
+                    if metric.get('cvr_mode', False):
+                        # CVR 使用 bps（基點）差值：(current - prior) * 100
+                        change = (value - prior_value) * 100 if prior_value > 0 else None
+                    elif prior_value > 0:
+                        change = ((value - prior_value) / prior_value) * 100
+                    else:
+                        change = None
+
+                    # 格式化數值
+                    if isinstance(value, (int, float)):
+                        value_rounded = round(value, 2) if metric.get('decimal', False) else round(value)
+                    else:
+                        value_rounded = value
+
+                    render_kpi_widget(
+                        metric['title'],
+                        value_rounded,
+                        change,
+                        prefix=metric.get('prefix', ''),
+                        suffix=metric.get('suffix', ''),
+                        help_text=metric.get('help_text'),
+                        show_change_percent=not metric.get('cvr_mode', False)  # CVR 不顯示 % 符號
+                    )
+        except Exception as e:
+            st.warning(f"計算 YTD 時發生錯誤: {e}")
 
     # 增加 KPI widgets 與下方元素的間距
     st.markdown("<div style='margin-bottom: 40px;'></div>", unsafe_allow_html=True)
@@ -1526,75 +1637,88 @@ if "Sales Traffic Report" in loaded_data:
         if selected_metrics and len(available_dates) > 1:
             import plotly.graph_objects as go
 
-            def create_comparison_chart(metric, sales_df, date_col):
-                # Get all dates from the dataframe and parse them
-                try:
-                    sales_df_copy = sales_df.copy()
-                    sales_df_copy['parsed_date'] = pd.to_datetime(sales_df_copy[date_col], errors='coerce')
-                    all_dates_in_df = sales_df_copy['parsed_date'].dropna()
+            # 先解析日期，取得資料中實際存在的年份
+            sales_df_copy = sales_df.copy()
+            sales_df_copy['parsed_date'] = pd.to_datetime(sales_df_copy[date_col], errors='coerce')
+            all_dates_in_df = sales_df_copy['parsed_date'].dropna()
+            
+            if not all_dates_in_df.empty:
+                # 動態取得資料中實際存在的年份
+                available_years_in_data = sorted(all_dates_in_df.dt.year.unique().tolist(), reverse=True)
+                
+                # 年份選擇器
+                col_year_select, _ = st.columns([1, 3])
+                with col_year_select:
+                    selected_chart_years = st.multiselect(
+                        "選擇要顯示的年份",
+                        options=available_years_in_data,
+                        default=available_years_in_data[:2] if len(available_years_in_data) >= 2 else available_years_in_data,
+                        key="business_metrics_year_selection"
+                    )
 
-                    if all_dates_in_df.empty:
-                        st.warning(f"No valid dates found for metric '{metric}'.")
+                # 定義年份對應的顏色
+                year_colors = ['#2E86AB', '#F18F01', '#28A745', '#DC3545', '#6F42C1', '#17A2B8']
+
+                def create_comparison_chart(metric, sales_df_copy, selected_years):
+                    if not selected_years:
                         return None
-                    latest_year = all_dates_in_df.max().year
-                    last_year = latest_year - 1
-                except Exception as e:
-                    st.error(f"Could not determine years from date column: {e}")
-                    return None
 
-                months_map = {1: 'Jan', 2: 'Feb', 3: 'Mar', 4: 'Apr', 5: 'May', 6: 'Jun', 7: 'Jul', 8: 'Aug', 9: 'Sep', 10: 'Oct', 11: 'Nov', 12: 'Dec'}
-                month_order = list(months_map.values())
+                    months_map = {1: 'Jan', 2: 'Feb', 3: 'Mar', 4: 'Apr', 5: 'May', 6: 'Jun', 7: 'Jul', 8: 'Aug', 9: 'Sep', 10: 'Oct', 11: 'Nov', 12: 'Dec'}
+                    month_order = list(months_map.values())
 
-                plot_data = []
-                for month_num, month_name in months_map.items():
-                    this_year_mask = (sales_df_copy['parsed_date'].dt.year == latest_year) & (sales_df_copy['parsed_date'].dt.month == month_num)
-                    this_year_series = sales_df_copy.loc[this_year_mask, metric]
-                    this_year_value = this_year_series.iloc[0] if not this_year_series.empty else None
+                    fig = go.Figure()
+                    
+                    # 為每個選擇的年份添加線條
+                    for year_idx, year in enumerate(sorted(selected_years, reverse=True)):
+                        year_data = []
+                        for month_num, month_name in months_map.items():
+                            year_mask = (sales_df_copy['parsed_date'].dt.year == year) & (sales_df_copy['parsed_date'].dt.month == month_num)
+                            year_series = sales_df_copy.loc[year_mask, metric]
+                            year_value = year_series.iloc[0] if not year_series.empty else None
+                            year_data.append(year_value)
+                        
+                        color = year_colors[year_idx % len(year_colors)]
+                        fig.add_trace(go.Scatter(
+                            x=month_order, 
+                            y=year_data, 
+                            name=f'{year}', 
+                            mode='lines+markers',
+                            line=dict(color=color, width=2),
+                            marker=dict(size=6, color=color)
+                        ))
 
-                    last_year_mask = (sales_df_copy['parsed_date'].dt.year == last_year) & (sales_df_copy['parsed_date'].dt.month == month_num)
-                    last_year_series = sales_df_copy.loc[last_year_mask, metric]
-                    last_year_value = last_year_series.iloc[0] if not last_year_series.empty else None
+                    fig.update_layout(
+                        title=f"{metric} (YoY Comparison)",
+                        xaxis_title="Month",
+                        yaxis_title="Value",
+                        height=350,
+                        legend_title_text='Year',
+                        margin=dict(l=40, r=40, t=40, b=40)
+                    )
+                    return fig
 
-                    if this_year_value is not None or last_year_value is not None:
-                         plot_data.append({'Month': month_name, f'{latest_year}': this_year_value, f'{last_year}': last_year_value})
+                if selected_chart_years:
+                    # 為每個選擇的指標生成一個圖表，每行兩個
+                    num_metrics = len(selected_metrics)
+                    for i in range(0, num_metrics, 2):
+                        col1, col2 = st.columns(2)
 
-                if not plot_data:
-                    st.info(f"Not enough data to generate a Year-over-Year comparison chart for '{metric}'.")
-                    return None
+                        with col1:
+                            metric1 = selected_metrics[i]
+                            fig1 = create_comparison_chart(metric1, sales_df_copy, selected_chart_years)
+                            if fig1:
+                                st.plotly_chart(fig1, use_container_width=True)
 
-                plot_df = pd.DataFrame(plot_data).set_index('Month').reindex(month_order).reset_index()
-
-                fig = go.Figure()
-                fig.add_trace(go.Scatter(x=plot_df['Month'], y=plot_df[f'{latest_year}'], name=f'{latest_year}', mode='lines+markers'))
-                fig.add_trace(go.Scatter(x=plot_df['Month'], y=plot_df[f'{last_year}'], name=f'{last_year}', mode='lines+markers'))
-
-                fig.update_layout(
-                    title=f"{metric} (YoY Comparison)",
-                    xaxis_title="Month",
-                    yaxis_title="Value",
-                    height=350,
-                    legend_title_text='Year',
-                    margin=dict(l=40, r=40, t=40, b=40)
-                )
-                return fig
-
-            # 為每個選擇的指標生成一個圖表，每行兩個
-            num_metrics = len(selected_metrics)
-            for i in range(0, num_metrics, 2):
-                col1, col2 = st.columns(2)
-
-                with col1:
-                    metric1 = selected_metrics[i]
-                    fig1 = create_comparison_chart(metric1, sales_df, date_col)
-                    if fig1:
-                        st.plotly_chart(fig1, use_container_width=True)
-
-                if i + 1 < num_metrics:
-                    with col2:
-                        metric2 = selected_metrics[i+1]
-                        fig2 = create_comparison_chart(metric2, sales_df, date_col)
-                        if fig2:
-                            st.plotly_chart(fig2, use_container_width=True)
+                        if i + 1 < num_metrics:
+                            with col2:
+                                metric2 = selected_metrics[i+1]
+                                fig2 = create_comparison_chart(metric2, sales_df_copy, selected_chart_years)
+                                if fig2:
+                                    st.plotly_chart(fig2, use_container_width=True)
+                else:
+                    st.info("請選擇至少一個年份來顯示圖表")
+            else:
+                st.warning("無法從日期欄位解析有效日期")
 
         elif selected_metrics and len(available_dates) <= 1:
             st.info("需要至少2個日期的數據才能顯示趨勢圖表")
@@ -2452,14 +2576,25 @@ if "Asin Report" in loaded_data:
                         lambda row: pd.to_numeric(row, errors='coerce').sum(), axis=1
                     )
 
+                    # 嘗試從 Asin Report 取得 Title 對照表
+                    asin_title_map = {}
+                    if "Asin Report" in loaded_data and loaded_data["Asin Report"] is not None:
+                        asin_report_df = loaded_data["Asin Report"]
+                        if 'Child ASIN' in asin_report_df.columns and 'Title' in asin_report_df.columns:
+                            asin_title_map = dict(zip(asin_report_df['Child ASIN'], asin_report_df['Title']))
+
                     # 取得最新月份 TOP 10 ASIN（用於表格顯示）
                     top_10_latest_df = trend_df.nlargest(10, '_latest_numeric')[['Child ASIN', latest_month]].copy()
                     top_10_latest_df.columns = ['ASIN', 'Sales']
+                    # 加入 Title 欄位（保留完整內容，由 column_config 控制顯示）
+                    top_10_latest_df.insert(1, 'Title', top_10_latest_df['ASIN'].map(asin_title_map).fillna('-'))
                     top_10_latest_df['Sales'] = top_10_latest_df['Sales'].apply(lambda x: f"${x:,.0f}" if pd.notna(x) else "-")
 
                     # 取得 YTD TOP 10 ASIN（用於表格顯示）
                     top_10_ytd_df = trend_df.nlargest(10, '_ytd_total')[['Child ASIN', '_ytd_total']].copy()
                     top_10_ytd_df.columns = ['ASIN', 'Sales']
+                    # 加入 Title 欄位（保留完整內容，由 column_config 控制顯示）
+                    top_10_ytd_df.insert(1, 'Title', top_10_ytd_df['ASIN'].map(asin_title_map).fillna('-'))
                     top_10_ytd_df['Sales'] = top_10_ytd_df['Sales'].apply(lambda x: f"${x:,.0f}" if pd.notna(x) else "-")
 
                     # 預設顯示的 ASIN（兩種模式都只取前 3 名）
@@ -2477,14 +2612,21 @@ if "Asin Report" in loaded_data:
                         key="asin_default_mode"
                     )
 
+                    # 表格欄位設定（Title 欄位預設較窄，可拖曳擴展）
+                    column_config = {
+                        "ASIN": st.column_config.TextColumn("ASIN", width="small"),
+                        "Title": st.column_config.TextColumn("Title", width="medium", help="拖曳欄位邊框可顯示更多內容"),
+                        "Sales": st.column_config.TextColumn("Sales", width="small")
+                    }
+
                     # 顯示 TOP 10 表格（並排）
                     col1, col2 = st.columns(2)
                     with col1:
                         st.markdown(f"**📊 最新月份 TOP 10** ({latest_month})")
-                        st.dataframe(top_10_latest_df, use_container_width=True, hide_index=True)
+                        st.dataframe(top_10_latest_df, use_container_width=True, hide_index=True, column_config=column_config)
                     with col2:
                         st.markdown("**🏆 YTD TOP 10**")
-                        st.dataframe(top_10_ytd_df, use_container_width=True, hide_index=True)
+                        st.dataframe(top_10_ytd_df, use_container_width=True, hide_index=True, column_config=column_config)
 
                     # 根據模式決定預設 ASIN（都只選 3 個）
                     if default_mode == "最新月份 TOP 3":

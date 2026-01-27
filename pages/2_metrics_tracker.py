@@ -243,9 +243,15 @@ def show_customer_id_filter_tab(df, selected_file):
                     )
 
                 with col_year:
+                    # 動態取得資料中實際存在的年份
+                    available_years = sorted(chart_df['calendar_year'].dropna().unique().tolist(), reverse=True)
                     st.write("**選擇年份:**")
-                    show_2024 = st.checkbox("2024", value=True, key="show_2024")
-                    show_2025 = st.checkbox("2025", value=True, key="show_2025")
+                    selected_years = []
+                    # 定義年份對應的顏色
+                    year_colors = ['#2E86AB', '#F18F01', '#28A745', '#DC3545', '#6F42C1', '#17A2B8']
+                    for idx, year in enumerate(available_years[:6]):  # 最多顯示6個年份
+                        if st.checkbox(str(int(year)), value=(idx < 2), key=f"show_{int(year)}"):
+                            selected_years.append(int(year))
 
                 if selected_metrics:
                     # 不限制圖表數量，但每行最多2張
@@ -266,47 +272,31 @@ def show_customer_id_filter_tab(df, selected_file):
                                 with chart_cols[i]:
                                     fig = go.Figure()
 
-                                    # 2025年資料
-                                    if show_2025:
-                                        current_year_data = chart_df[chart_df['calendar_year'] == current_year]
-                                        if not current_year_data.empty:
-                                            monthly_data = current_year_data[['calendar_month', metric]].dropna().sort_values('calendar_month')
+                                    # 根據選擇的年份動態繪製
+                                    for year_idx, year in enumerate(sorted(selected_years, reverse=True)):
+                                        year_data = chart_df[chart_df['calendar_year'] == year]
+                                        if not year_data.empty:
+                                            monthly_data = year_data[['calendar_month', metric]].dropna().sort_values('calendar_month')
                                             if not monthly_data.empty:
                                                 # 判斷是否為百分比或TACoS類型的欄位
                                                 is_percentage = 'tacos' in metric.lower() or '%' in metric or 'rate' in metric.lower()
                                                 text_format = f"{{val:.1f}}%" if is_percentage else "{val:,.0f}"
+                                                
+                                                # 取得對應顏色
+                                                color = year_colors[year_idx % len(year_colors)]
+                                                # 第一個年份（最新）在上方顯示文字，其他在下方
+                                                text_position = 'top center' if year_idx == 0 else 'bottom center'
 
                                                 fig.add_trace(go.Scatter(
                                                     x=monthly_data['calendar_month'],
                                                     y=monthly_data[metric],
                                                     mode='lines+markers+text',
-                                                    name=f'{current_year}年',
+                                                    name=f'{year}年',
                                                     text=[text_format.format(val=val) for val in monthly_data[metric]],
-                                                    textposition='top center',
-                                                    textfont=dict(size=13, color='#2E86AB'),
-                                                    line=dict(color='#2E86AB', width=2, shape='spline'),
-                                                    marker=dict(size=4, color='#2E86AB', symbol='circle')
-                                                ))
-
-                                    # 2024年資料
-                                    if show_2024:
-                                        last_year_data = chart_df[chart_df['calendar_year'] == current_year - 1]
-                                        if not last_year_data.empty:
-                                            monthly_data = last_year_data[['calendar_month', metric]].dropna().sort_values('calendar_month')
-                                            if not monthly_data.empty:
-                                                is_percentage = 'tacos' in metric.lower() or '%' in metric or 'rate' in metric.lower()
-                                                text_format = f"{{val:.1f}}%" if is_percentage else "{val:,.0f}"
-
-                                                fig.add_trace(go.Scatter(
-                                                    x=monthly_data['calendar_month'],
-                                                    y=monthly_data[metric],
-                                                    mode='lines+markers+text',
-                                                    name=f'{current_year - 1}年',
-                                                    text=[text_format.format(val=val) for val in monthly_data[metric]],
-                                                    textposition='bottom center',
-                                                    textfont=dict(size=12, color='#F18F01'),
-                                                    line=dict(color='#F18F01', width=2, shape='spline'),
-                                                    marker=dict(size=4, color='#F18F01', symbol='circle')
+                                                    textposition=text_position,
+                                                    textfont=dict(size=12 if year_idx > 0 else 13, color=color),
+                                                    line=dict(color=color, width=2, shape='spline'),
+                                                    marker=dict(size=4, color=color, symbol='circle')
                                                 ))
 
                                     # 格式化圖表標題和軸標籤

@@ -6,11 +6,10 @@ from pathlib import Path
 UPLOAD_DIR = Path("uploaded_data")
 UPLOAD_DIR.mkdir(exist_ok=True)
 
-# 文件類型對應的子資料夾
+# 文件類型對應的子資料夾（移除 Total Year Change，改由 Sales Traffic Report 動態計算）
 FILE_TYPES = {
     "P0 MCID MBR": "p0_mcid_mbr",
     "Sales Traffic Report": "sales_traffic_report",
-    "Total Year Change": "total_year_change",
     "Asin Report": "asin_report",
     "ASIN Trend (YTD)": "asin_trend",
 }
