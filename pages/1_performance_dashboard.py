@@ -941,20 +941,28 @@ if "Sales Traffic Report" in loaded_data:
                         else:
                             weights[month] = 0
                     
-                    # 計算去年 YoY 的加權平均
+                    # 計算去年 YoY 的加權平均（只計算有數據且合理的月份）
+                    # 過濾掉異常值：YoY 超過 500% 或低於 -90% 視為異常
                     weighted_yoy_sum = 0
+                    valid_yoy_count = 0
                     for month in all_months:
                         yoy = previous_yoy_values.get(month)
-                        if yoy is not None and pd.notna(yoy):
+                        if yoy is not None and pd.notna(yoy) and -90 <= yoy <= 500:
                             weighted_yoy_sum += yoy * weights[month]
+                            valid_yoy_count += 1
+                    
+                    # 如果去年 YoY 數據不足（少於 6 個月有效且合理），直接使用均勻分配
+                    if valid_yoy_count < 6:
+                        return {m: int(annual_yoy_target) for m in all_months}
                     
                     last_year_weighted_avg = weighted_yoy_sum
                     
                     # 計算各月 YoY 跟加權平均的差距（波動形狀）
+                    # 異常值的月份使用 0 差距
                     yoy_diff = {}
                     for month in all_months:
                         yoy = previous_yoy_values.get(month)
-                        if yoy is not None and pd.notna(yoy):
+                        if yoy is not None and pd.notna(yoy) and -90 <= yoy <= 500:
                             yoy_diff[month] = yoy - last_year_weighted_avg
                         else:
                             yoy_diff[month] = 0
@@ -2567,8 +2575,25 @@ if "Asin Report" in loaded_data:
                                 if month_pattern.match(str(col))]
 
                 if month_columns:
-                    # 計算最新月份的銷售額（用於排序）
-                    latest_month = month_columns[-1]
+                    # 計算最新「完整」月份的銷售額（用於排序）
+                    # 例如：現在是 2/2，最新完整月份應該是 1 月，而不是 2 月
+                    from datetime import datetime
+                    today = datetime.now()
+                    # 取得上個月的年月（最新完整月份）
+                    if today.month == 1:
+                        last_complete_year = today.year - 1
+                        last_complete_month = 12
+                    else:
+                        last_complete_year = today.year
+                        last_complete_month = today.month - 1
+                    last_complete_month_str = f"{last_complete_year}-{last_complete_month:02d}"
+                    
+                    # 如果最新完整月份存在於資料中，使用它；否則使用資料中最後一個月份
+                    if last_complete_month_str in month_columns:
+                        latest_month = last_complete_month_str
+                    else:
+                        latest_month = month_columns[-1]
+                    
                     trend_df['_latest_numeric'] = pd.to_numeric(trend_df[latest_month], errors='coerce').fillna(0)
 
                     # 計算 YTD 總銷售額
