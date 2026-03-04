@@ -446,66 +446,111 @@ st.markdown("<div style='margin: 40px 0;'></div>", unsafe_allow_html=True)
 # 定義四種文件類型（移除 Total Year Change，改由 Sales Traffic Report 動態計算）
 file_types = ["Sales Traffic Report", "P0 MCID MBR", "Asin Report", "ASIN Trend (YTD)"]
 
-# 創建欄位來顯示不同的文件選擇器（2 + 2 排版）
-col1, col2 = st.columns(2)
-col3, col4 = st.columns(2)
-columns = [col1, col2, col3, col4]
+# ===== 賣家切換器 =====
+from utils import get_seller_list, find_seller_files
 
-# 初始化 session_state 來保存數據
-if 'multi_file_selected_files' not in st.session_state:
-    st.session_state.multi_file_selected_files = {}
+seller_list = get_seller_list()  # [(display_name, seller_key, mcid), ...]
+
+# 初始化 session_state
 if 'multi_file_loaded_data' not in st.session_state:
     st.session_state.multi_file_loaded_data = {}
 
-# 儲存選中的檔案
 selected_files = {}
 loaded_data = {}
 
-for i, file_type in enumerate(file_types):
-    with columns[i]:
-        st.subheader(f"📁 {file_type}")
+# 預設值
+current_seller_key = ""
+current_mcid = ""
 
-        # 獲取該類型的檔案
-        files = list_uploaded_files(file_type)
+if seller_list:
+    # 建立選項（不再在 label 裡顯示 MCID）
+    seller_options_display = []
+    seller_options_map = {}
+    for display_name, seller_key, mcid in seller_list:
+        seller_options_display.append(display_name)
+        seller_options_map[display_name] = (seller_key, mcid)
 
-        if files:
-            file_options = {f.name: f for f in files}
-            selected_name = st.selectbox(
-                f"選擇 {file_type} 檔案",
-                options=list(file_options.keys()),
-                key=f"select_{file_type.replace(' ', '_').lower()}"
-            )
+    # 賣家下拉 + MCID 同一行
+    sel_col, mcid_col, _ = st.columns([1, 1, 2])
+    with sel_col:
+        selected_seller_label = st.selectbox(
+            "選擇客戶",
+            options=seller_options_display,
+            key="seller_switcher",
+            label_visibility="collapsed",
+        )
 
-            if selected_name and selected_name != "請選擇檔案...":
-                selected_file = file_options[selected_name]
-                selected_files[file_type] = selected_file
+    current_seller_key, current_mcid = seller_options_map[selected_seller_label]
 
-                # 檢查是否需要重新加載檔案（檔案名稱改變了）
-                cache_key = f"{file_type}_filename"
-                if cache_key not in st.session_state or st.session_state[cache_key] != selected_name:
-                    # 檔案改變了，需要重新讀取
-                    df, error = load_data(selected_file)
-                    if error:
-                        st.error(f"無法讀取檔案: {error}")
+    with mcid_col:
+        if current_mcid:
+            st.markdown(f"<div style='line-height:38px;padding-top:4px;color:#333;font-size:16px;font-weight:500;'>MCID: {current_mcid}</div>", unsafe_allow_html=True)
+
+    st.markdown("<div style='margin-bottom:24px'></div>", unsafe_allow_html=True)
+
+    # 自動找出該賣家的所有檔案並靜默載入
+    seller_files = find_seller_files(current_seller_key)
+
+    # P0 MCID MBR 是全域資料（不分賣家），自動載入最新的 P0 檔案
+    if "P0 MCID MBR" not in seller_files:
+        p0_files = list_uploaded_files("P0 MCID MBR")
+        if p0_files:
+            seller_files["P0 MCID MBR"] = p0_files[0]  # 最新的
+
+    for file_type in file_types:
+        auto_file = seller_files.get(file_type)
+        if auto_file:
+            cache_key = f"{current_seller_key}_{file_type}_{auto_file.name}"
+            if st.session_state.get(f"{file_type}_cache_key") != cache_key:
+                df, error = load_data(auto_file)
+                if error is None:
+                    st.session_state.multi_file_loaded_data[file_type] = df
+                    st.session_state[f"{file_type}_cache_key"] = cache_key
+                    loaded_data[file_type] = df
+            else:
+                if file_type in st.session_state.multi_file_loaded_data:
+                    loaded_data[file_type] = st.session_state.multi_file_loaded_data[file_type]
+            selected_files[file_type] = auto_file
+
+else:
+    # 沒有偵測到賣家時，顯示手動選擇模式
+    st.info("💡 尚未偵測到任何賣家。請先到「資料處理中心」上傳檔案（檔名需包含賣家名稱）。")
+
+    col1, col2 = st.columns(2)
+    col3, col4 = st.columns(2)
+    columns = [col1, col2, col3, col4]
+
+    for i, file_type in enumerate(file_types):
+        with columns[i]:
+            st.markdown(f"**📁 {file_type}**")
+            files = list_uploaded_files(file_type)
+
+            if files:
+                file_options = {f.name: f for f in files}
+                selected_name = st.selectbox(
+                    f"選擇 {file_type} 檔案",
+                    options=list(file_options.keys()),
+                    key=f"select_{file_type.replace(' ', '_').lower()}"
+                )
+
+                if selected_name:
+                    selected_file = file_options[selected_name]
+                    selected_files[file_type] = selected_file
+
+                    cache_key = f"{file_type}_filename"
+                    if cache_key not in st.session_state or st.session_state[cache_key] != selected_name:
+                        df, error = load_data(selected_file)
+                        if error:
+                            st.error(f"無法讀取檔案: {error}")
+                        else:
+                            st.session_state.multi_file_loaded_data[file_type] = df
+                            st.session_state[cache_key] = selected_name
+                            loaded_data[file_type] = df
                     else:
-                        # 儲存到 session_state
-                        st.session_state.multi_file_loaded_data[file_type] = df
-                        st.session_state[cache_key] = selected_name
-                        loaded_data[file_type] = df
-                else:
-                    # 使用快取的數據
-                    if file_type in st.session_state.multi_file_loaded_data:
-                        loaded_data[file_type] = st.session_state.multi_file_loaded_data[file_type]
-
-                # 顯示資料預覽
-                if file_type in loaded_data:
-                    if st.checkbox(f"預覽 {file_type}", key=f"preview_{file_type.replace(' ', '_').lower()}"):
-                        st.dataframe(loaded_data[file_type].head(), use_container_width=True)
-        else:
-            st.info(f"目前沒有 {file_type} 類型的檔案")
-
-# 分隔線
-st.markdown("---")
+                        if file_type in st.session_state.multi_file_loaded_data:
+                            loaded_data[file_type] = st.session_state.multi_file_loaded_data[file_type]
+            else:
+                st.info(f"目前沒有 {file_type} 類型的檔案")
 
 # Overall Sales Summary 區塊（從 Sales Traffic Report 動態計算）
 if "Sales Traffic Report" in loaded_data:
@@ -766,11 +811,11 @@ if "Sales Traffic Report" in loaded_data:
             # 排序年份
             sorted_years = sorted(year_columns.keys(), reverse=True)
 
-            # 年份選擇器 - 預設選擇最近三年
+            # 年份選擇器 - 預設選擇全部年份
             selected_years = st.multiselect(
                 "Select Years",
                 options=sorted_years,
-                default=sorted_years[:3] if len(sorted_years) >= 3 else sorted_years,  # 預設選擇最近三年
+                default=sorted_years,  # 預設選擇全部年份
                 key="selected_years_for_chart",
                 label_visibility="collapsed"
             )
@@ -1523,11 +1568,21 @@ if "Sales Traffic Report" in loaded_data:
             available_dates = sorted([str(d) for d in available_dates], reverse=True)
             st.session_state.date_mapping = {d: d for d in available_dates}
 
-        # 日期選擇下拉選單
+        # 日期選擇下拉選單 — 預設選上一個完整月份
+        # available_dates 已按時間倒序排列 (如 ['2026-03', '2026-02', '2026-01', ...])
+        from datetime import datetime
+        now = datetime.now()
+        last_complete_month = f"{now.year}-{now.month - 1:02d}" if now.month > 1 else f"{now.year - 1}-12"
+        default_date_index = 0
+        if last_complete_month in available_dates:
+            default_date_index = available_dates.index(last_complete_month)
+        elif len(available_dates) > 1:
+            default_date_index = 1  # 跳過最新的（可能不完整）
+
         selected_date = st.selectbox(
             "選擇日期",
             options=available_dates,
-            index=0,  # 預設選擇最新的日期
+            index=default_date_index,
             key="business_metrics_date"
         )
 
@@ -1660,7 +1715,7 @@ if "Sales Traffic Report" in loaded_data:
                     selected_chart_years = st.multiselect(
                         "選擇要顯示的年份",
                         options=available_years_in_data,
-                        default=available_years_in_data[:2] if len(available_years_in_data) >= 2 else available_years_in_data,
+                        default=available_years_in_data,  # 預設選擇全部年份
                         key="business_metrics_year_selection"
                     )
 
@@ -2782,12 +2837,24 @@ if "P0 MCID MBR" in loaded_data:
         # 排序並去重
         cleaned_cids = sorted(list(set(cleaned_cids)))
 
+        # 根據賣家 MCID 自動預選
+        auto_cid_index = 0  # 預設「請選擇...」
+        if seller_list and current_mcid:
+            # 嘗試在 cleaned_cids 中找到匹配的 MCID
+            for idx, cid in enumerate(cleaned_cids):
+                if cid == current_mcid or cid == str(current_mcid).strip():
+                    auto_cid_index = idx + 1  # +1 因為第一個是「請選擇...」
+                    break
+
         # 顯示下拉選單
         cid_input = st.selectbox(
             "選擇 CID (merchant_customer_id):",
             options=["請選擇..."] + cleaned_cids,
+            index=auto_cid_index,
             key="ads_cid_selector"
         )
+
+        # 如果自動匹配成功，不需要額外提示
 
         # 如果沒有選擇 CID，顯示提示並停止後續處理
         if cid_input == "請選擇...":
@@ -2846,22 +2913,17 @@ if "P0 MCID MBR" in loaded_data:
         st.warning("未找到 merchant_customer_id 欄位")
         st.stop()
 
-    # Marketplace ID 篩選器（必選）
+    # Marketplace ID 篩選器（預設選第一個）
     marketplace_filter = None
     if 'marketplace_id' in cid_filtered_df.columns:
         available_marketplaces = sorted(cid_filtered_df['marketplace_id'].dropna().unique())
         if available_marketplaces:
             marketplace_filter = st.selectbox(
-                "選擇 Marketplace (必選)",
-                options=["請選擇..."] + list(available_marketplaces),
+                "選擇 Marketplace",
+                options=list(available_marketplaces),
                 index=0,
                 key="ads_marketplace_selector"
             )
-
-            # 如果沒有選擇 marketplace，顯示提示並停止後續處理
-            if marketplace_filter == "請選擇...":
-                st.warning("⚠️ 請先選擇一個 Marketplace 才能查看數據")
-                st.stop()
         else:
             st.warning("未找到任何 Marketplace ID")
             st.stop()

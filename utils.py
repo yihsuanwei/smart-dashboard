@@ -1,10 +1,13 @@
 import pandas as pd
+import json
 import os
 from pathlib import Path
 
 
 UPLOAD_DIR = Path("uploaded_data")
 UPLOAD_DIR.mkdir(exist_ok=True)
+
+SELLER_REGISTRY_PATH = UPLOAD_DIR / "seller_registry.json"
 
 # 文件類型對應的子資料夾（移除 Total Year Change，改由 Sales Traffic Report 動態計算）
 FILE_TYPES = {
@@ -88,36 +91,6 @@ def add_calculated_columns(df):
         )
     return df
 
-def detect_file_type(filename: str) -> str | None:
-    """根據檔名關鍵字自動偵測文件類型，回傳 FILE_TYPES 的 key 或 None"""
-    name = filename.upper()
-    if "SALES_TRAFFIC_REPORT" in name or "SALES TRAFFIC REPORT" in name:
-        return "Sales Traffic Report"
-    if "ASIN_REPORT" in name or "ASIN REPORT" in name or "LASTMONTHTABLE" in name:
-        return "Asin Report"
-    if "ASIN_TREND" in name or "ASIN TREND" in name or "TREND_YTD" in name:
-        return "ASIN Trend (YTD)"
-    if "P0" in name or "MCID" in name:
-        return "P0 MCID MBR"
-    return None
-
-
-
-def detect_file_type(filename: str) -> str | None:
-    """根據檔名關鍵字自動偵測文件類型，回傳 FILE_TYPES 的 key 或 None"""
-    name = filename.upper()
-    if "SALES_TRAFFIC_REPORT" in name or "SALES TRAFFIC REPORT" in name:
-        return "Sales Traffic Report"
-    if "ASIN_REPORT" in name or "ASIN REPORT" in name or "LASTMONTHTABLE" in name:
-        return "Asin Report"
-    if "ASIN_TREND" in name or "ASIN TREND" in name or "TREND_YTD" in name:
-        return "ASIN Trend (YTD)"
-    if "P0" in name or "MCID" in name:
-        return "P0 MCID MBR"
-    return None
-
-
-
 def detect_file_type(filename: str):
     """根據檔名關鍵字自動偵測文件類型，回傳 FILE_TYPES 的 key 或 None"""
     name = filename.upper()
@@ -130,3 +103,155 @@ def detect_file_type(filename: str):
     if "P0" in name or "MCID" in name:
         return "P0 MCID MBR"
     return None
+
+
+# ===== Seller Registry（僅存 MCID 對應）=====
+
+def load_seller_registry():
+    """載入賣家 MCID 對應表"""
+    if SELLER_REGISTRY_PATH.exists():
+        with open(SELLER_REGISTRY_PATH, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    return {}
+
+
+def save_seller_registry(registry):
+    """儲存賣家 MCID 對應表"""
+    with open(SELLER_REGISTRY_PATH, 'w', encoding='utf-8') as f:
+        json.dump(registry, f, ensure_ascii=False, indent=2)
+
+
+def set_seller_mcid(seller_key, mcid):
+    """設定某個賣家的 MCID"""
+    registry = load_seller_registry()
+    registry[seller_key] = mcid
+    save_seller_registry(registry)
+
+
+def get_seller_mcid(seller_key):
+    """取得某個賣家的 MCID"""
+    registry = load_seller_registry()
+    return registry.get(seller_key, "")
+
+
+def _extract_seller_name(filename, file_type_key):
+    """從檔名提取賣家名稱
+    
+    檔名格式: YYYY-MM-DD_賣家名稱_檔案類型.csv
+    策略: 去掉日期前綴，去掉檔案類型關鍵字，剩下的就是賣家名稱
+    
+    也處理:
+    - 重複下載的 " 1", " 2" 後綴 (如 Report 1.csv)
+    - 異常前綴 (如 "TR 12months2026-01-18_...")
+    """
+    import re
+    stem = Path(filename).stem  # 去掉 .csv
+    
+    # 先移除尾部的重複下載編號 (空格+數字，如 " 1", " 2")
+    stem = re.sub(r'\s+\d+$', '', stem)
+    
+    # 去掉日期前綴 (YYYY-MM-DD_)
+    # 也處理日期前面有垃圾前綴的情況 (如 "TR 12months2026-01-18_")
+    stem = re.sub(r'^.*?\d{4}-\d{2}-\d{2}_', '', stem)
+    
+    # 如果沒有日期前綴（整個 stem 沒變），跳過這個檔案
+    if stem == Path(filename).stem or not stem:
+        return None
+    
+    # 檔案類型關鍵字（用來從檔名尾部移除，長的放前面優先匹配）
+    type_keywords = [
+        'ASIN_Report_lastMonthTable',
+        'Sales_Traffic_Report', 'Sales Traffic Report',
+        'ASIN_Report', 'ASIN Report',
+        'ASIN_Trend_YTD', 'ASIN_Trend', 'ASIN Trend',
+        'P0_MCID_MBR', 'MCID_MBR', 'MBR',
+    ]
+    
+    for kw in type_keywords:
+        # 移除尾部的類型關鍵字（不分大小寫）
+        pattern = re.compile(re.escape(kw) + r'$', re.IGNORECASE)
+        stem = pattern.sub('', stem)
+    
+    # 清理尾部的底線和空白
+    stem = stem.strip('_ ')
+    
+    return stem if stem else None
+
+
+def scan_sellers_from_files():
+    """掃描 uploaded_data/ 各子資料夾，從檔名自動提取所有賣家名稱
+    
+    回傳 sorted list of seller_key strings
+    """
+    sellers = set()
+    
+    for file_type, folder_name in FILE_TYPES.items():
+        folder_path = UPLOAD_DIR / folder_name
+        if not folder_path.exists():
+            continue
+        
+        for f in folder_path.glob("*.csv"):
+            seller = _extract_seller_name(f.name, file_type)
+            if seller:
+                sellers.add(seller)
+    
+    return sorted(sellers, key=lambda x: x.lower())
+
+
+def get_seller_list():
+    """取得所有賣家列表（自動偵測 + MCID），按最新檔案時間排序
+    
+    回傳 [(display_name, seller_key, mcid), ...]，最近有資料更新的賣家排在前面
+    """
+    sellers = scan_sellers_from_files()
+    registry = load_seller_registry()
+    
+    # 計算每個賣家最新檔案的修改時間
+    def _latest_mtime(seller_key):
+        latest = 0
+        for folder_name in FILE_TYPES.values():
+            folder_path = UPLOAD_DIR / folder_name
+            if not folder_path.exists():
+                continue
+            for f in folder_path.glob("*.csv"):
+                if seller_key in f.stem:
+                    mtime = f.stat().st_mtime
+                    if mtime > latest:
+                        latest = mtime
+        return latest
+    
+    # 按最新檔案時間排序（最新的在前）
+    sellers_with_time = [(s, _latest_mtime(s)) for s in sellers]
+    sellers_with_time.sort(key=lambda x: x[1], reverse=True)
+    
+    result = []
+    for seller_key, _ in sellers_with_time:
+        display_name = seller_key.replace('_', ' ')
+        mcid = registry.get(seller_key, "")
+        result.append((display_name, seller_key, mcid))
+    
+    return result
+
+
+def find_seller_files(seller_key, file_type=None):
+    """找出某個賣家在各資料夾中最新的檔案
+    
+    回傳 dict: {file_type: Path} 只包含找到的類型
+    """
+    result = {}
+    search_types = {file_type: FILE_TYPES[file_type]} if file_type else FILE_TYPES
+    
+    for ft, folder_name in search_types.items():
+        folder_path = UPLOAD_DIR / folder_name
+        if not folder_path.exists():
+            continue
+        
+        # 找出檔名包含 seller_key 的檔案
+        matching = [f for f in folder_path.glob("*.csv") if seller_key in f.stem]
+        
+        if matching:
+            # 按修改時間排序，取最新的
+            matching.sort(key=lambda f: f.stat().st_mtime, reverse=True)
+            result[ft] = matching[0]
+    
+    return result

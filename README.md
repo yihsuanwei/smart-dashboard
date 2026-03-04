@@ -56,6 +56,7 @@ smart_dashboard_20260112/
 │   ├── 2_metrics_tracker.py         # Metrics Tracker（客戶指標追蹤）
 │   └── 3_seller_finder.py           # Seller Finder（賣家查找與篩選）
 └── uploaded_data/        # 分類上傳檔案目錄
+    ├── seller_registry.json     # 賣家 MCID 對應表
     ├── p0_mcid_mbr/             # P0 MCID MBR 檔案
     ├── sales_traffic_report/    # 銷售流量報告
     ├── asin_report/             # 商品層級報告
@@ -99,17 +100,13 @@ smart_dashboard_20260112/
 
 **智能檔案分類系統**
 1. 前往「Upload」頁面
-2. 選擇 CSV 檔案並選擇檔案類型 (測試的話可用 Sample raw data 的檔案)
-   - **P0 MCID MBR** - 請對應 Raw data 檔名
-   - **Sales Traffic Report** - 請對應 Raw data 檔名（Overall Sales Summary 會從此檔案動態計算）
-   - **Asin Report** - 請對應 Raw data 檔名
-   - **ASIN Trend (YTD)** - ASIN 月度銷售趨勢資料
-
-   提醒：一定要選擇正確、對應的檔案類型 
-3. 自訂檔名並選擇資料處理選項
-4. **點擊「上傳並處理」按鈕**
-5. **看到氣球動畫表示上傳成功** 🎈
-6. 系統自動分類存儲到對應資料夾
+2. 選擇一個或多個 CSV 檔案（支援複選）
+3. 系統自動根據檔名偵測檔案類型，偵測結果顯示在每個檔案旁邊
+   - 偵測正確 → 直接上傳即可
+   - 偵測錯誤或無法辨識 → 展開該檔案手動選擇類型
+4. 如需修改檔名，可在各檔案的展開區域中調整
+5. **點擊「全部上傳並處理」按鈕**
+6. **看到氣球動畫表示全部上傳成功** 🎈
 
 ### 📊 Performance Dashboard 使用流程
 
@@ -564,6 +561,7 @@ requirements.txt                   # Python 套件依賴清單
 setup.bat                          # Windows 安裝腳本
 start.bat                          # Windows 啟動腳本
 uploaded_data/                     # 數據存儲目錄
+├── seller_registry.json         # 賣家 MCID 對應表（獨立於 CSV，刪檔不影響）
 ├── p0_mcid_mbr/                   # P0 MCID MBR 檔案
 ├── sales_traffic_report/          # 銷售流量報告
 ├── asin_report/                   # 商品層級報告
@@ -598,11 +596,40 @@ uploaded_data/                     # 數據存儲目錄
 
 ---
 
-**版本 3.3.0** | **更新日期：2026-01-27** | **Overall Sales Summary 動態計算版**
+**版本 3.5.0** | **更新日期：2026-03-04** | **賣家自動偵測 + MCID 管理版**
 
 ---
 
 ## 🆕 版本更新歷史
+
+### 版本 3.5.0 (2026-03-04)
+
+**🏪 賣家自動偵測與 MCID 管理**
+- **自動偵測賣家**：從上傳檔名（格式 `YYYY-MM-DD_賣家名稱_檔案類型.csv`）自動提取賣家名稱，無需手動註冊
+- **MCID 彈窗輸入**：上傳後偵測到新賣家時，自動彈出 dialog 讓你填入 MCID
+- **MCID 獨立儲存**：記錄在 `uploaded_data/seller_registry.json`，與 CSV 檔案分開，刪除 CSV 不影響已記錄的 MCID
+- **Dashboard 賣家切換**：Performance Dashboard 頂部新增下拉選單，按最新資料時間排序，選擇後自動載入該賣家所有檔案
+- **P0 全域資料**：P0 MCID MBR 為全域資料（不分賣家），Dashboard 自動載入最新 P0 檔案
+
+**📤 Upload UX 改善**
+- **上傳結果改用 toast**：成功/失敗訊息幾秒後自動消失，不佔畫面空間
+- **MCID 儲存確認 toast**：儲存 MCID 後顯示確認訊息，自動消失
+- **檔案選擇器自動重置**：每次上傳完成後，file uploader 自動清空，不會累積前次選擇的檔案
+- **移除所有 emoji**：dialog 標題、按鈕、toast 訊息不使用 emoji
+
+### 版本 3.4.0 (2026-03-04)
+
+**📤 Upload - 批次上傳與自動偵測**
+- **支援複選上傳**：可一次選擇多個 CSV 檔案，不用一個一個傳
+- **自動偵測檔案類型**：根據檔名關鍵字自動判斷是哪種類型，不用手動選
+  - 含 `Sales_Traffic_Report` → Sales Traffic Report
+  - 含 `ASIN_Report` 或 `lastMonthTable` → Asin Report
+  - 含 `ASIN_Trend` 或 `Trend_YTD` → ASIN Trend (YTD)
+  - 含 `P0` 或 `MCID` → P0 MCID MBR
+  - 無法辨識的檔案會標示 ⚠️，需手動選擇
+- **每個檔案可個別調整**：偵測結果不對可以手動改類型和檔名
+- **一鍵全部上傳**：所有檔案一次處理完，帶進度條
+- **P0 篩選選項保留**：篩選業務人員、最新一筆等選項會統一套用到所有 P0 類型檔案
 
 ### 版本 3.3.0 (2026-01-27)
 
