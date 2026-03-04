@@ -4,7 +4,11 @@
       "Bash(git checkout:*)",
       "Bash(python reorganize_tabs.py:*)",
       "Bash(python -m py_compile:*)",
-      "Bash(del reorganize_tabs.py)"
+      "Bash(del reorganize_tabs.py)",
+      "Bash(unzip:*)",
+      "Bash(for i in 11 12 13 14 15 16 17 18 19 20)",
+      "Bash(do echo \"=== Slide $i ===\")",
+      "Bash(done)"
     ]
   }
 }

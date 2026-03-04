@@ -87,3 +87,46 @@ def add_calculated_columns(df):
             axis=1
         )
     return df
+
+def detect_file_type(filename: str) -> str | None:
+    """根據檔名關鍵字自動偵測文件類型，回傳 FILE_TYPES 的 key 或 None"""
+    name = filename.upper()
+    if "SALES_TRAFFIC_REPORT" in name or "SALES TRAFFIC REPORT" in name:
+        return "Sales Traffic Report"
+    if "ASIN_REPORT" in name or "ASIN REPORT" in name or "LASTMONTHTABLE" in name:
+        return "Asin Report"
+    if "ASIN_TREND" in name or "ASIN TREND" in name or "TREND_YTD" in name:
+        return "ASIN Trend (YTD)"
+    if "P0" in name or "MCID" in name:
+        return "P0 MCID MBR"
+    return None
+
+
+
+def detect_file_type(filename: str) -> str | None:
+    """根據檔名關鍵字自動偵測文件類型，回傳 FILE_TYPES 的 key 或 None"""
+    name = filename.upper()
+    if "SALES_TRAFFIC_REPORT" in name or "SALES TRAFFIC REPORT" in name:
+        return "Sales Traffic Report"
+    if "ASIN_REPORT" in name or "ASIN REPORT" in name or "LASTMONTHTABLE" in name:
+        return "Asin Report"
+    if "ASIN_TREND" in name or "ASIN TREND" in name or "TREND_YTD" in name:
+        return "ASIN Trend (YTD)"
+    if "P0" in name or "MCID" in name:
+        return "P0 MCID MBR"
+    return None
+
+
+
+def detect_file_type(filename: str):
+    """根據檔名關鍵字自動偵測文件類型，回傳 FILE_TYPES 的 key 或 None"""
+    name = filename.upper()
+    if "SALES_TRAFFIC_REPORT" in name or "SALES TRAFFIC REPORT" in name:
+        return "Sales Traffic Report"
+    if "ASIN_REPORT" in name or "ASIN REPORT" in name or "LASTMONTHTABLE" in name:
+        return "Asin Report"
+    if "ASIN_TREND" in name or "ASIN TREND" in name or "TREND_YTD" in name:
+        return "ASIN Trend (YTD)"
+    if "P0" in name or "MCID" in name:
+        return "P0 MCID MBR"
+    return None
