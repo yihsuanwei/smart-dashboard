@@ -85,10 +85,11 @@ def show_customer_id_filter_tab(df, selected_file):
     marketplace_filter = None
     if 'marketplace_id' in df.columns:
         available_marketplaces = sorted(df['marketplace_id'].dropna().unique().tolist())
+        available_marketplaces_int = [int(m) for m in available_marketplaces]
         if available_marketplaces:
             marketplace_filter = st.multiselect(
                 "🌍 選擇 Marketplace ID",
-                options=available_marketplaces,
+                options=available_marketplaces_int,
                 help="可選擇多個 Marketplace"
             )
 
@@ -98,10 +99,11 @@ def show_customer_id_filter_tab(df, selected_file):
     year_filter = None
     if 'calendar_year' in df.columns:
         available_years = sorted(df['calendar_year'].dropna().unique().tolist())
+        available_years_int = [int(y) for y in available_years]
         if available_years:
             year_filter = st.multiselect(
                 "📅 選擇 Calendar Year",
-                options=available_years,
+                options=available_years_int,
                 help="可選擇多個年份"
             )
 
@@ -111,10 +113,11 @@ def show_customer_id_filter_tab(df, selected_file):
     month_filter = None
     if 'calendar_month' in df.columns:
         available_months = sorted(df['calendar_month'].dropna().unique().tolist())
+        available_months_int = [int(m) for m in available_months]
         if available_months:
             month_filter = st.multiselect(
                 "📆 選擇 Calendar Month",
-                options=available_months,
+                options=available_months_int,
                 help="可選擇多個月份"
             )
 

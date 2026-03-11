@@ -2917,10 +2917,12 @@ if "P0 MCID MBR" in loaded_data:
     marketplace_filter = None
     if 'marketplace_id' in cid_filtered_df.columns:
         available_marketplaces = sorted(cid_filtered_df['marketplace_id'].dropna().unique())
+        # 轉為整數顯示
+        available_marketplaces_int = [int(m) for m in available_marketplaces]
         if available_marketplaces:
             marketplace_filter = st.selectbox(
                 "選擇 Marketplace",
-                options=list(available_marketplaces),
+                options=available_marketplaces_int,
                 index=0,
                 key="ads_marketplace_selector"
             )
@@ -3095,7 +3097,10 @@ if "P0 MCID MBR" in loaded_data:
                             x=plot_df['Month'],
                             y=plot_df[latest_year_str],
                             name=latest_year_str,
-                            mode='lines+markers'
+                            mode='lines+markers+text',
+                            text=[f'{v:.1f}%' if pd.notna(v) else '' for v in plot_df[latest_year_str]],
+                            textposition='top center',
+                            textfont=dict(size=11)
                         ))
 
                     # 再添加前一年
@@ -3106,7 +3111,10 @@ if "P0 MCID MBR" in loaded_data:
                                 x=plot_df['Month'],
                                 y=plot_df[last_year_str],
                                 name=last_year_str,
-                                mode='lines+markers'
+                                mode='lines+markers+text',
+                                text=[f'{v:.1f}%' if pd.notna(v) else '' for v in plot_df[last_year_str]],
+                                textposition='top center',
+                                textfont=dict(size=11)
                             ))
 
                     # 如果有更多年份
@@ -3118,7 +3126,10 @@ if "P0 MCID MBR" in loaded_data:
                                     x=plot_df['Month'],
                                     y=plot_df[year_str],
                                     name=year_str,
-                                    mode='lines+markers'
+                                    mode='lines+markers+text',
+                                    text=[f'{v:.1f}%' if pd.notna(v) else '' for v in plot_df[year_str]],
+                                    textposition='top center',
+                                    textfont=dict(size=11)
                                 ))
 
                     # 設置布局
@@ -3175,12 +3186,26 @@ if "P0 MCID MBR" in loaded_data:
                     # 創建圖表
                     fig = go.Figure()
 
+                    # 格式化數字標籤的輔助函數
+                    def _fmt_amount(val):
+                        if pd.isna(val):
+                            return ''
+                        if abs(val) >= 1_000_000:
+                            return f'${val/1_000_000:,.1f}M'
+                        elif abs(val) >= 1_000:
+                            return f'${val/1_000:,.0f}k'
+                        else:
+                            return f'${val:,.0f}'
+
                     # Revenue 線 (藍色)
                     fig.add_trace(go.Scatter(
                         x=grouped_data['year_month'],
                         y=grouped_data['mtd_ord_gms'],
                         name='Revenue',
-                        mode='lines+markers',
+                        mode='lines+markers+text',
+                        text=[_fmt_amount(v) for v in grouped_data['mtd_ord_gms']],
+                        textposition='top center',
+                        textfont=dict(size=10, color='#1f77b4'),
                         line=dict(color='#1f77b4', width=2),
                         marker=dict(size=6)
                     ))
@@ -3190,7 +3215,10 @@ if "P0 MCID MBR" in loaded_data:
                         x=grouped_data['year_month'],
                         y=grouped_data['mtd_sa_revenue_usd'],
                         name='Ads Spending',
-                        mode='lines+markers',
+                        mode='lines+markers+text',
+                        text=[_fmt_amount(v) for v in grouped_data['mtd_sa_revenue_usd']],
+                        textposition='bottom center',
+                        textfont=dict(size=10, color='#ff7f0e'),
                         line=dict(color='#ff7f0e', width=2),
                         marker=dict(size=6)
                     ))
