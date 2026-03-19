@@ -2429,6 +2429,22 @@ if "Asin Report" in loaded_data:
                 }
                 display_df = display_df.rename(columns=column_rename_map)
 
+                # ===== 重新排列欄位：CVR 組移到 Orders 組前面 =====
+                cols = list(display_df.columns)
+                # 定義 Orders 組和 CVR 組的欄位（含 MoM/YoY）
+                orders_group = [c for c in ['Orders', 'Orders-lm', 'Orders-ly', 'MoM.2', 'YoY.2'] if c in cols]
+                cvr_group = [c for c in ['CVR', 'CVR-lm', 'CVR-ly', 'MoM.3', 'YoY.3'] if c in cols]
+                if orders_group and cvr_group:
+                    # 找到 Orders 組第一個欄位的位置
+                    orders_start = cols.index(orders_group[0])
+                    # 移除兩組欄位
+                    for c in orders_group + cvr_group:
+                        cols.remove(c)
+                    # 在原 Orders 位置插入：CVR 組在前，Orders 組在後
+                    for i, c in enumerate(cvr_group + orders_group):
+                        cols.insert(orders_start + i, c)
+                    display_df = display_df[cols]
+
                 # 重設索引，從1開始編號
                 display_df = display_df.reset_index(drop=True)
                 display_df.index = display_df.index + 1

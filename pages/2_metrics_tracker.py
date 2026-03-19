@@ -238,10 +238,14 @@ def show_customer_id_filter_tab(df, selected_file):
                 col_select, col_year = st.columns([2, 1])
 
                 with col_select:
+                    # 預設三個指標：mtd_ord_gms, mtd_TACoS, mtd_sa_revenue
+                    default_trend_metrics = [m for m in ['mtd_ord_gms', 'mtd_TACoS', 'mtd_sa_revenue'] if m in numeric_columns]
+                    if not default_trend_metrics:
+                        default_trend_metrics = numeric_columns[:2]
                     selected_metrics = st.multiselect(
                         "選擇要顯示的指標",
                         options=numeric_columns,
-                        default=['mtd_ord_gms', 'mtd_TACoS'] if all(col in numeric_columns for col in ['mtd_ord_gms', 'mtd_TACoS']) else numeric_columns[:2],
+                        default=default_trend_metrics,
                         help="每行最多顯示2個圖表，多的會換行顯示"
                     )
 
@@ -297,34 +301,58 @@ def show_customer_id_filter_tab(df, selected_file):
                                                     name=f'{year}年',
                                                     text=[text_format.format(val=val) for val in monthly_data[metric]],
                                                     textposition=text_position,
-                                                    textfont=dict(size=12 if year_idx > 0 else 13, color=color),
+                                                    textfont=dict(size=12, color=color),
                                                     line=dict(color=color, width=2, shape='spline'),
-                                                    marker=dict(size=4, color=color, symbol='circle')
+                                                    marker=dict(size=4, color=color, symbol='circle'),
+                                                    cliponaxis=False
                                                 ))
 
                                     # 格式化圖表標題和軸標籤
                                     display_metric = metric.replace('_', ' ').title()
                                     y_title = f"{display_metric} (%)" if 'tacos' in metric.lower() or '%' in metric else display_metric
 
+                                    # 計算 y 軸範圍，上下各留 15% 空間給標籤
+                                    all_y_vals = []
+                                    for trace in fig.data:
+                                        all_y_vals.extend(trace.y)
+                                    if all_y_vals:
+                                        y_min = min(all_y_vals)
+                                        y_max = max(all_y_vals)
+                                        y_range_span = y_max - y_min if y_max != y_min else max(abs(y_max) * 0.1, 1)
+                                        y_axis_min = max(0, y_min - y_range_span * 0.15)
+                                        y_axis_max = y_max + y_range_span * 0.18
+                                        y_range = [y_axis_min, y_axis_max]
+                                    else:
+                                        y_range = None
+
                                     fig.update_layout(
-                                        title=dict(text=display_metric, font=dict(size=14, color='#2c3e50'), x=0.5),
-                                        xaxis=dict(title="月份", showgrid=True, gridcolor='#f0f0f0', tickfont=dict(size=10)),
-                                        yaxis=dict(title=y_title, showgrid=True, gridcolor='#f0f0f0', tickfont=dict(size=10)),
+                                        title=dict(text=display_metric, font=dict(size=14, color='#2c3e50'), x=0.5, y=0.98, yanchor='top'),
+                                        xaxis=dict(
+                                            title="月份", showgrid=True, gridcolor='#f0f0f0',
+                                            tickfont=dict(size=10),
+                                            tickmode='linear', dtick=1,
+                                            range=[0.5, 12.5]
+                                        ),
+                                        yaxis=dict(
+                                            title=y_title, showgrid=True, gridcolor='#f0f0f0',
+                                            tickfont=dict(size=10),
+                                            range=y_range,
+                                        ),
                                         plot_bgcolor='white', paper_bgcolor='white',
-                                        showlegend=True,  # 每個圖都顯示圖例
+                                        showlegend=True,
                                         legend=dict(
                                             orientation="h",
-                                            yanchor="top",
-                                            y=0.98,
-                                            xanchor="right",
-                                            x=0.98,
+                                            yanchor="bottom",
+                                            y=1.08,
+                                            xanchor="center",
+                                            x=0.5,
                                             font=dict(size=10, color='#2c3e50'),
                                             bgcolor='rgba(255,255,255,0.9)',
                                             bordercolor='#e0e0e0',
                                             borderwidth=1
                                         ),
-                                        margin=dict(t=60, b=50, l=50, r=30),
-                                        height=400
+                                        margin=dict(t=100, b=50, l=55, r=30),
+                                        height=450
                                     )
                                     st.plotly_chart(fig, use_container_width=True)
                 else:
