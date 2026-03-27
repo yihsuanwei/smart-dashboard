@@ -963,14 +963,54 @@ if "Sales Traffic Report" in loaded_data:
                     with open(targets_file, 'w', encoding='utf-8') as f:
                         json.dump(targets_data, f, ensure_ascii=False, indent=2)
 
-                def smart_allocate(annual_yoy_target, last_year_sales_dict, previous_yoy_values):
+                def parse_peak_months(peak_months_str):
+                    """
+                    解析旺季月份字串，支援格式如 '3-5, 11-12' 或 '3,4,5,11,12'
+                    回傳月份數字的 set，例如 {3, 4, 5, 11, 12}
+                    """
+                    if not peak_months_str or not peak_months_str.strip():
+                        return set()
+                    
+                    result = set()
+                    parts = peak_months_str.replace('，', ',').replace('、', ',').replace(' ', '').split(',')
+                    for part in parts:
+                        part = part.strip()
+                        if not part:
+                            continue
+                        if '-' in part:
+                            try:
+                                start, end = part.split('-', 1)
+                                start, end = int(start), int(end)
+                                if start <= end:
+                                    result.update(range(start, end + 1))
+                                else:
+                                    # 跨年：例如 11-2 → 11,12,1,2
+                                    result.update(range(start, 13))
+                                    result.update(range(1, end + 1))
+                            except ValueError:
+                                continue
+                        else:
+                            try:
+                                result.add(int(part))
+                            except ValueError:
+                                continue
+                    # 過濾只保留 1-12
+                    return {m for m in result if 1 <= m <= 12}
+
+                def smart_allocate(annual_yoy_target, last_year_sales_dict, previous_yoy_values, peak_months=None):
                     """
                     智能分配: 保持去年 YoY 的波動形狀，整體平移到符合全年目標
                     
-                    關鍵：Sum YoY = (今年Sum - 去年Sum) / 去年Sum
-                    所以要確保各月 YoY 加權平均（權重=去年sales）等於目標
+                    改進：
+                    - 基期異常偵測：去年 YoY 超過目標 3 倍或超過 150% 視為基期效應，用中位數替代
+                    - 單月上限：任何月份 YoY 不超過目標的 2.5 倍，超過的部分重新分配給其他月份
+                    - 單月下限：任何月份 YoY 不低於目標的 20%（至少保有一定成長）
+                    
+                    peak_months: set of int (1-12)，旺季月份會額外加成 YoY
                     """
                     annual_yoy_target = max(0, annual_yoy_target)
+                    month_to_num = {'Jan': 1, 'Feb': 2, 'Mar': 3, 'Apr': 4, 'May': 5, 'Jun': 6,
+                                    'Jul': 7, 'Aug': 8, 'Sep': 9, 'Oct': 10, 'Nov': 11, 'Dec': 12}
                     
                     # 計算去年 Sum
                     last_year_sum = sum(v for v in last_year_sales_dict.values() if v and pd.notna(v))
@@ -986,47 +1026,112 @@ if "Sales Traffic Report" in loaded_data:
                         else:
                             weights[month] = 0
                     
-                    # 計算去年 YoY 的加權平均（只計算有數據且合理的月份）
-                    # 過濾掉異常值：YoY 超過 500% 或低於 -90% 視為異常
-                    weighted_yoy_sum = 0
-                    valid_yoy_count = 0
+                    # ---- 基期異常偵測 ----
+                    # 閾值：去年 YoY 超過 max(150, 目標*3) 或低於 -80 視為基期異常
+                    outlier_cap = max(150, annual_yoy_target * 3)
+                    
+                    # 收集有效的 YoY 值
+                    valid_yoys = []
                     for month in all_months:
                         yoy = previous_yoy_values.get(month)
-                        if yoy is not None and pd.notna(yoy) and -90 <= yoy <= 500:
-                            weighted_yoy_sum += yoy * weights[month]
-                            valid_yoy_count += 1
+                        if yoy is not None and pd.notna(yoy) and -80 <= yoy <= outlier_cap:
+                            valid_yoys.append(yoy)
                     
-                    # 如果去年 YoY 數據不足（少於 6 個月有效且合理），直接使用均勻分配
+                    # 計算中位數（用來替代異常值）
+                    if valid_yoys:
+                        sorted_yoys = sorted(valid_yoys)
+                        mid = len(sorted_yoys) // 2
+                        median_yoy = sorted_yoys[mid] if len(sorted_yoys) % 2 == 1 else (sorted_yoys[mid-1] + sorted_yoys[mid]) / 2
+                    else:
+                        median_yoy = annual_yoy_target
+                    
+                    # 建立清理後的 YoY（異常值用中位數替代）
+                    cleaned_yoy = {}
+                    for month in all_months:
+                        yoy = previous_yoy_values.get(month)
+                        if yoy is not None and pd.notna(yoy) and -80 <= yoy <= outlier_cap:
+                            cleaned_yoy[month] = yoy
+                        else:
+                            cleaned_yoy[month] = median_yoy
+                    
+                    # 計算清理後的加權平均
+                    weighted_yoy_sum = 0
+                    valid_yoy_count = sum(1 for m in all_months if previous_yoy_values.get(m) is not None 
+                                          and pd.notna(previous_yoy_values.get(m))
+                                          and -80 <= previous_yoy_values.get(m) <= outlier_cap)
+                    for month in all_months:
+                        weighted_yoy_sum += cleaned_yoy[month] * weights[month]
+                    
+                    # 如果去年 YoY 數據不足（少於 6 個月有效），直接使用均勻分配
                     if valid_yoy_count < 6:
+                        if peak_months:
+                            return _apply_peak_season(
+                                {m: annual_yoy_target for m in all_months},
+                                weights, peak_months, month_to_num, annual_yoy_target
+                            )
                         return {m: int(annual_yoy_target) for m in all_months}
                     
                     last_year_weighted_avg = weighted_yoy_sum
                     
                     # 計算各月 YoY 跟加權平均的差距（波動形狀）
-                    # 異常值的月份使用 0 差距
                     yoy_diff = {}
                     for month in all_months:
-                        yoy = previous_yoy_values.get(month)
-                        if yoy is not None and pd.notna(yoy) and -90 <= yoy <= 500:
-                            yoy_diff[month] = yoy - last_year_weighted_avg
-                        else:
-                            yoy_diff[month] = 0
+                        yoy_diff[month] = cleaned_yoy[month] - last_year_weighted_avg
                     
                     # 初始分配：目標 + 差距
                     initial_yoy = {}
                     for month in all_months:
                         initial_yoy[month] = annual_yoy_target + yoy_diff[month]
                     
-                    # 計算加權平均 YoY（這就是 Sum YoY）
+                    # 如果有旺季設定，套用淡旺季加成
+                    if peak_months:
+                        initial_yoy = _apply_peak_season(
+                            initial_yoy, weights, peak_months, month_to_num, annual_yoy_target
+                        )
+                    
+                    # ---- 單月上下限 ----
+                    # 上限：目標的 2.5 倍（至少 50%）
+                    # 下限：目標的 20%（至少 0%）
+                    month_cap = max(50, annual_yoy_target * 2.5)
+                    month_floor = max(0, annual_yoy_target * 0.2)
+                    
+                    # 計算加權平均 YoY
                     def calc_weighted_avg_yoy(yoy_dict):
                         total = 0
                         for month in all_months:
                             total += yoy_dict[month] * weights[month]
                         return total
                     
-                    # 迭代調整，確保加權平均 = 目標
-                    # 因為差距的加權和應該是 0，所以理論上 initial_yoy 的加權平均就是 annual_yoy_target
-                    # 但四捨五入會產生誤差，需要校正
+                    # 套用上下限，超出的部分重新分配
+                    for _ in range(10):  # 迭代幾次確保收斂
+                        excess = 0  # 被截掉的加權 YoY 總量
+                        uncapped_weight = 0  # 未被截的月份權重總和
+                        
+                        capped_months = set()
+                        floored_months = set()
+                        
+                        for month in all_months:
+                            if initial_yoy[month] > month_cap:
+                                excess += (initial_yoy[month] - month_cap) * weights[month]
+                                initial_yoy[month] = month_cap
+                                capped_months.add(month)
+                            elif initial_yoy[month] < month_floor:
+                                excess -= (month_floor - initial_yoy[month]) * weights[month]
+                                initial_yoy[month] = month_floor
+                                floored_months.add(month)
+                        
+                        # 把多餘的分配給未被截的月份
+                        for month in all_months:
+                            if month not in capped_months and month not in floored_months:
+                                uncapped_weight += weights[month]
+                        
+                        if abs(excess) > 0.1 and uncapped_weight > 0:
+                            redistribution = excess / uncapped_weight
+                            for month in all_months:
+                                if month not in capped_months and month not in floored_months:
+                                    initial_yoy[month] += redistribution
+                        else:
+                            break
                     
                     # 先四捨五入
                     result = {}
@@ -1036,22 +1141,193 @@ if "Sales Traffic Report" in loaded_data:
                     # 計算目前的加權平均
                     current_weighted_avg = calc_weighted_avg_yoy(result)
                     
-                    # 如果有誤差，逐步調整權重最大的月份
+                    # 微調確保加權平均 ≈ 目標
                     max_iterations = 50
                     for _ in range(max_iterations):
                         diff = annual_yoy_target - current_weighted_avg
-                        if abs(diff) < 0.5:  # 誤差小於 0.5% 就停止
+                        if abs(diff) < 0.5:
                             break
                         
-                        # 找到權重最大的月份來調整
-                        max_month = max(all_months, key=lambda m: weights.get(m, 0))
+                        # 找到權重最大且未觸頂/觸底的月份來調整
+                        adjustable = [m for m in all_months 
+                                      if (diff > 0 and result[m] < month_cap) or 
+                                         (diff < 0 and result[m] > month_floor)]
+                        if not adjustable:
+                            break
+                        
+                        best_month = max(adjustable, key=lambda m: weights.get(m, 0))
                         
                         if diff > 0:
-                            result[max_month] += 1
+                            result[best_month] += 1
                         else:
-                            result[max_month] = max(0, result[max_month] - 1)
+                            result[best_month] = max(0, result[best_month] - 1)
                         
                         current_weighted_avg = calc_weighted_avg_yoy(result)
+                    
+                    return result
+
+                def _apply_peak_season(yoy_dict, weights, peak_months, month_to_num, annual_target):
+                    """
+                    套用淡旺季邏輯：旺季月份 YoY 加成，淡季月份降低，
+                    保持加權平均 ≈ annual_target
+                    
+                    策略：旺季加 boost，淡季減 offset，用加權平均反推 offset
+                    boost = annual_target * 0.4（旺季額外加 40% 的目標值）
+                    """
+                    peak_set = peak_months if isinstance(peak_months, set) else set(peak_months)
+                    if not peak_set:
+                        return yoy_dict
+                    
+                    # 計算旺季/淡季的權重總和
+                    peak_weight_sum = 0
+                    off_weight_sum = 0
+                    for month in yoy_dict:
+                        m_num = month_to_num[month]
+                        if m_num in peak_set:
+                            peak_weight_sum += weights.get(month, 0)
+                        else:
+                            off_weight_sum += weights.get(month, 0)
+                    
+                    # 避免除以零
+                    if off_weight_sum == 0 or peak_weight_sum == 0:
+                        return yoy_dict
+                    
+                    # boost 大小：目標的 40%，至少 5 個百分點
+                    boost = max(5, annual_target * 0.4)
+                    
+                    # 為了保持加權平均不變：
+                    # peak_weight_sum * boost = off_weight_sum * offset
+                    # offset = (peak_weight_sum * boost) / off_weight_sum
+                    offset = (peak_weight_sum * boost) / off_weight_sum
+                    
+                    result = {}
+                    for month in yoy_dict:
+                        m_num = month_to_num[month]
+                        base = yoy_dict[month]
+                        if m_num in peak_set:
+                            result[month] = base + boost
+                        else:
+                            result[month] = max(0, base - offset)
+                    
+                    return result
+
+                def adjust_for_actuals(base_targets, annual_yoy_target, last_year_sales, this_year_sales, peak_months=None):
+                    """
+                    核心邏輯：已過月份用實際值鎖定，剩餘月份重新分配，
+                    確保全年 Sum YoY 一定等於目標。
+                    
+                    計算方式（用絕對金額反推）：
+                    1. 全年目標銷售額 = 去年全年 Sum × (1 + 目標%)
+                    2. 已過月份已經貢獻了多少銷售額（實際值）
+                    3. 剩餘需要的銷售額 = 全年目標 - 已過月份實際
+                    4. 把剩餘銷售額分配到未來月份，反推每月需要的 YoY%
+                    """
+                    from datetime import datetime
+                    current_month_num = datetime.now().month
+                    month_to_num_local = {'Jan': 1, 'Feb': 2, 'Mar': 3, 'Apr': 4, 'May': 5, 'Jun': 6,
+                                          'Jul': 7, 'Aug': 8, 'Sep': 9, 'Oct': 10, 'Nov': 11, 'Dec': 12}
+                    
+                    # 去年全年 Sum
+                    last_year_sum = sum(v for v in last_year_sales.values() if v and pd.notna(v))
+                    if last_year_sum == 0:
+                        return base_targets
+                    
+                    # 全年目標銷售額
+                    target_total_sales = last_year_sum * (1 + annual_yoy_target / 100)
+                    
+                    # 分類已過/未來月份
+                    actual_sales_sum = 0
+                    actual_month_count = 0
+                    future_months = []
+                    
+                    for month in all_months:
+                        m_num = month_to_num_local[month]
+                        actual = this_year_sales.get(month)
+                        if m_num < current_month_num and actual and pd.notna(actual):
+                            actual_sales_sum += actual
+                            actual_month_count += 1
+                        else:
+                            future_months.append(month)
+                    
+                    # 如果沒有已過月份或全部都過了，不需要調整
+                    if actual_month_count == 0 or len(future_months) == 0:
+                        return base_targets
+                    
+                    # 剩餘需要的銷售額
+                    remaining_needed = target_total_sales - actual_sales_sum
+                    
+                    # 計算未來月份去年銷售額的總和（用來分配權重）
+                    future_last_year_sum = 0
+                    future_weights = {}
+                    for month in future_months:
+                        ls = last_year_sales.get(month)
+                        if ls and pd.notna(ls):
+                            future_weights[month] = ls
+                            future_last_year_sum += ls
+                        else:
+                            future_weights[month] = 0
+                    
+                    if future_last_year_sum == 0:
+                        return base_targets
+                    
+                    # 先算出未來月份整體需要的 YoY%
+                    # remaining_needed = future_last_year_sum × (1 + future_avg_yoy / 100)
+                    # future_avg_yoy = (remaining_needed / future_last_year_sum - 1) × 100
+                    future_avg_yoy = (remaining_needed / future_last_year_sum - 1) * 100
+                    future_avg_yoy = max(0, future_avg_yoy)  # 不允許負目標
+                    
+                    # 用 base_targets 的相對比例來分配（保留淡旺季形狀）
+                    # 計算 base_targets 在未來月份的加權平均
+                    base_future_weighted = 0
+                    for month in future_months:
+                        w = future_weights[month] / future_last_year_sum if future_last_year_sum > 0 else 0
+                        base_future_weighted += base_targets.get(month, annual_yoy_target) * w
+                    
+                    # 計算每月跟未來平均的差距（保留形狀）
+                    result = {}
+                    for month in all_months:
+                        m_num = month_to_num_local[month]
+                        actual = this_year_sales.get(month)
+                        if m_num < current_month_num and actual and pd.notna(actual):
+                            # 已過月份：保留 base_targets（顯示時會被實際值覆蓋）
+                            result[month] = base_targets.get(month, annual_yoy_target)
+                        else:
+                            # 未來月份：平移到新的 future_avg_yoy
+                            base_val = base_targets.get(month, annual_yoy_target)
+                            diff = base_val - base_future_weighted if base_future_weighted != 0 else 0
+                            new_val = future_avg_yoy + diff
+                            result[month] = max(0, int(round(new_val)))
+                    
+                    # 驗算：確保未來月份的加權 YoY 精確等於 future_avg_yoy
+                    # 用迭代微調
+                    month_cap = max(80, annual_yoy_target * 3)
+                    for _ in range(50):
+                        # 計算當前未來月份的預估總銷售
+                        current_future_sales = 0
+                        for month in future_months:
+                            ls = last_year_sales.get(month)
+                            if ls and pd.notna(ls):
+                                current_future_sales += ls * (1 + result[month] / 100)
+                        
+                        total_estimated = actual_sales_sum + current_future_sales
+                        current_sum_yoy = ((total_estimated - last_year_sum) / last_year_sum) * 100
+                        
+                        gap = annual_yoy_target - current_sum_yoy
+                        if abs(gap) < 0.3:
+                            break
+                        
+                        # 找未來月份中權重最大且可調整的來微調
+                        adjustable = [m for m in future_months 
+                                      if future_weights.get(m, 0) > 0 and
+                                         ((gap > 0 and result[m] < month_cap) or (gap < 0 and result[m] > 0))]
+                        if not adjustable:
+                            break
+                        
+                        best = max(adjustable, key=lambda m: future_weights.get(m, 0))
+                        if gap > 0:
+                            result[best] += 1
+                        else:
+                            result[best] = max(0, result[best] - 1)
                     
                     return result
 
@@ -1208,16 +1484,20 @@ if "Sales Traffic Report" in loaded_data:
                             saved_data = all_targets[current_file_key][str(this_year)]
                             saved_targets = saved_data.get('monthly_targets', {})
                             if saved_targets:
-                                st.session_state[target_session_key] = {
+                                base = {
                                     month: float(saved_targets[month]['target_yoy'])
                                     for month in all_months if month in saved_targets
                                 }
                             else:
-                                allocated = smart_allocate(saved_annual_target, last_year_sales, last_year_yoy)
-                                st.session_state[target_session_key] = allocated
+                                saved_peak_str = saved_data.get('peak_months_str', '')
+                                init_peak = parse_peak_months(saved_peak_str) or None
+                                base = smart_allocate(saved_annual_target, last_year_sales, last_year_yoy, init_peak)
                         else:
-                            allocated = smart_allocate(saved_annual_target, last_year_sales, last_year_yoy)
-                            st.session_state[target_session_key] = allocated
+                            base = smart_allocate(saved_annual_target, last_year_sales, last_year_yoy)
+                        
+                        # 根據已過月份的實際表現調整未來月份，確保全年 Sum YoY = 目標
+                        adjusted = adjust_for_actuals(base, saved_annual_target, last_year_sales, this_year_sales)
+                        st.session_state[target_session_key] = adjusted
 
                     # 初始化 undo 堆疊
                     if undo_session_key not in st.session_state:
@@ -1345,8 +1625,17 @@ if "Sales Traffic Report" in loaded_data:
                     # 全年 YoY 目標輸入 + 可編輯的月度 YoY
                     st.markdown("---")
 
-                    # 全年目標輸入（縮小欄位）
-                    col_input, col_spacer = st.columns([1, 5])
+                    # 全年目標 + 旺季月份輸入
+                    col_input, col_peak, col_spacer = st.columns([1, 1.5, 3.5])
+                    
+                    # 載入已儲存的旺季設定
+                    peak_months_key = f"peak_months_str_{current_file_key}_{this_year}"
+                    if peak_months_key not in st.session_state:
+                        saved_peak = ""
+                        if current_file_key in all_targets and str(this_year) in all_targets[current_file_key]:
+                            saved_peak = all_targets[current_file_key][str(this_year)].get('peak_months_str', '')
+                        st.session_state[peak_months_key] = saved_peak
+                    
                     with col_input:
                         annual_yoy_target = st.number_input(
                             f"目標 % (user input)",
@@ -1357,15 +1646,40 @@ if "Sales Traffic Report" in loaded_data:
                             key=f"annual_yoy_input_{this_year}",
                             help="輸入全年 YoY 目標後，系統會智能分配到各月份"
                         )
+                    
+                    with col_peak:
+                        peak_months_str = st.text_input(
+                            "🔥 旺季月份",
+                            value=st.session_state[peak_months_key],
+                            placeholder="例如: 3-5, 11-12",
+                            key=f"peak_months_input_{this_year}",
+                            help="輸入旺季月份範圍，旺季 YoY 會自動加成。格式：3-5, 11-12 或 3,4,5,11,12。支援跨年如 11-2"
+                        )
+                    
+                    # 解析旺季月份
+                    current_peak_months = parse_peak_months(peak_months_str)
+                    
+                    # 顯示解析結果（如果有輸入）
+                    if current_peak_months:
+                        month_names = {1:'Jan',2:'Feb',3:'Mar',4:'Apr',5:'May',6:'Jun',
+                                       7:'Jul',8:'Aug',9:'Sep',10:'Oct',11:'Nov',12:'Dec'}
+                        peak_display = ', '.join(month_names[m] for m in sorted(current_peak_months))
+                        with col_peak:
+                            st.caption(f"🔥 {peak_display}")
+                    
+                    # 檢查旺季設定是否改變
+                    peak_months_changed = st.session_state[peak_months_key] != peak_months_str
+                    if peak_months_changed:
+                        st.session_state[peak_months_key] = peak_months_str
 
                     # 檢查全年目標是否改變
                     annual_target_changed = abs(st.session_state[annual_target_key] - annual_yoy_target) > 0.01
 
-                    if annual_target_changed:
+                    if annual_target_changed or peak_months_changed:
                         st.session_state[annual_target_key] = annual_yoy_target
-                        st.session_state[undo_session_key].append(current_targets.copy())
-                        allocated = smart_allocate(annual_yoy_target, last_year_sales, last_year_yoy)
-                        st.session_state[target_session_key] = allocated
+                        base = smart_allocate(annual_yoy_target, last_year_sales, last_year_yoy, current_peak_months or None)
+                        adjusted = adjust_for_actuals(base, annual_yoy_target, last_year_sales, this_year_sales, current_peak_months or None)
+                        st.session_state[target_session_key] = adjusted
                         st.rerun()
 
                     # 可編輯的月度目標 YoY
@@ -1413,35 +1727,13 @@ if "Sales Traffic Report" in loaded_data:
                     for month in all_months:
                         edited_targets[month] = int(round(edited_df[month].iloc[0]))
 
-                    # 按鈕區域（三個按鈕靠右，平均間隔）
-                    btn_spacer, btn_col1, btn_col2, btn_col3 = st.columns([7, 1, 1, 1])
+                    # Save 按鈕靠右
+                    btn_spacer, btn_save = st.columns([9, 1])
                     
                     button_clicked = False
 
-                    with btn_col1:
-                        undo_disabled = len(st.session_state.get(undo_session_key, [])) == 0
-                        if st.button("Undo", key=f"undo_targets_{this_year}", disabled=undo_disabled, use_container_width=True):
-                            button_clicked = True
-                            if st.session_state[undo_session_key]:
-                                previous_state = st.session_state[undo_session_key].pop()
-                                st.session_state[target_session_key] = previous_state
-                                st.rerun()
-
-                    with btn_col2:
-                        if st.button("🪄 Reallocate", key=f"reset_targets_{this_year}", use_container_width=True):
-                            button_clicked = True
-                            st.session_state[undo_session_key].append(current_targets.copy())
-                            new_targets = smart_allocate(annual_yoy_target, last_year_sales, last_year_yoy)
-                            st.session_state[target_session_key] = new_targets
-
-                            if current_file_key in all_targets and str(this_year) in all_targets[current_file_key]:
-                                del all_targets[current_file_key][str(this_year)]
-                                save_targets(all_targets)
-
-                            st.rerun()
-
-                    with btn_col3:
-                        if st.button("Save Changes", key=f"save_targets_{this_year}", type="primary", use_container_width=True):
+                    with btn_save:
+                        if st.button("Save", key=f"save_targets_{this_year}", type="primary", use_container_width=True):
                             button_clicked = True
                             if current_file_key not in all_targets:
                                 all_targets[current_file_key] = {}
@@ -1462,12 +1754,12 @@ if "Sales Traffic Report" in loaded_data:
 
                             all_targets[current_file_key][str(this_year)] = {
                                 'annual_yoy_target': float(annual_yoy_target),
+                                'peak_months_str': peak_months_str,
                                 'monthly_targets': monthly_targets,
                                 'modified_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                             }
 
                             save_targets(all_targets)
-                            # 自訂 toast 1.5 秒後消失
                             st.markdown("""
                             <style>
                                 .custom-toast {
@@ -1501,7 +1793,6 @@ if "Sales Traffic Report" in loaded_data:
                         )
 
                         if has_changes:
-                            st.session_state[undo_session_key].append(current_targets.copy())
                             st.session_state[target_session_key] = edited_targets
                             st.rerun()
 
