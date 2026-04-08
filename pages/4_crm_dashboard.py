@@ -7,6 +7,9 @@ ivory-cli 每週 sync-pkey 後，這裡馬上看到最新數據。
 import streamlit as st
 import pandas as pd
 import sqlite3
+import json
+import plotly.express as px
+import plotly.graph_objects as go
 from pathlib import Path
 
 # ivory-cli 的資料庫路徑（絕對路徑，不依賴相對位置計算）
@@ -35,34 +38,63 @@ def load_sellers():
 
 
 @st.cache_data(ttl=120)
-def load_performance():
+def _load_week_list():
+    """只載入 year-week 清單，用於篩選器和決定要查哪幾週"""
     conn = get_db_connection()
     if conn is None:
         return pd.DataFrame()
-    df = pd.read_sql("""
-        SELECT * FROM performance_data
-        WHERE (year, week) IN (
-            SELECT DISTINCT year, week FROM performance_data
-            ORDER BY year DESC, week DESC LIMIT 8
-        )
-        OR (year = (SELECT MAX(year)-1 FROM performance_data)
-            AND week IN (SELECT DISTINCT week FROM performance_data
-                        WHERE year = (SELECT MAX(year) FROM performance_data)
-                        ORDER BY week DESC LIMIT 8))
-    """, conn)
+    df = pd.read_sql(
+        "SELECT DISTINCT year, week FROM performance_data ORDER BY year DESC, week DESC",
+        conn,
+    )
     conn.close()
     return df
 
 
 @st.cache_data(ttl=120)
-def load_performance_monthly():
+def load_performance_weeks(year_week_pairs: tuple):
+    """只載入指定的 (year, week) 組合，避免全表掃描"""
     conn = get_db_connection()
     if conn is None:
         return pd.DataFrame()
-    try:
-        df = pd.read_sql("SELECT * FROM performance_monthly", conn)
-    except Exception:
-        df = pd.DataFrame()
+    if not year_week_pairs:
+        conn.close()
+        return pd.DataFrame()
+    conditions = " OR ".join(
+        [f"(year={y} AND week={w})" for y, w in year_week_pairs]
+    )
+    df = pd.read_sql(f"SELECT * FROM performance_data WHERE {conditions}", conn)
+    conn.close()
+    return df
+
+
+@st.cache_data(ttl=120)
+def _load_month_list():
+    """只載入 year-month 清單"""
+    conn = get_db_connection()
+    if conn is None:
+        return pd.DataFrame()
+    df = pd.read_sql(
+        "SELECT DISTINCT year, month FROM performance_monthly ORDER BY year DESC, month DESC",
+        conn,
+    )
+    conn.close()
+    return df
+
+
+@st.cache_data(ttl=120)
+def load_performance_months(year_month_pairs: tuple):
+    """只載入指定的 (year, month) 組合"""
+    conn = get_db_connection()
+    if conn is None:
+        return pd.DataFrame()
+    if not year_month_pairs:
+        conn.close()
+        return pd.DataFrame()
+    conditions = " OR ".join(
+        [f"(year={y} AND month={m})" for y, m in year_month_pairs]
+    )
+    df = pd.read_sql(f"SELECT * FROM performance_monthly WHERE {conditions}", conn)
     conn.close()
     return df
 
@@ -78,7 +110,6 @@ def load_notes():
 
 
 def parse_tags(tags_json):
-    import json
     try:
         return json.loads(tags_json) if isinstance(tags_json, str) else []
     except Exception:
@@ -115,15 +146,23 @@ if not DB_PATH.exists():
     st.error(f"找不到 ivory-cli 資料庫：{DB_PATH}")
     st.stop()
 
-# 載入資料
+# 載入核心資料（sellers 很小，直接載入；績效資料延遲到需要時才載入）
 sellers_df = load_sellers()
-perf_df = load_performance()
-perf_monthly_df = load_performance_monthly()
-notes_df = load_notes()
 
 if sellers_df.empty:
     st.warning("CRM 資料庫是空的。請先執行 sync-pkey 匯入 PKEY 資料。")
     st.stop()
+
+# 載入 week/month 清單（極快，只有幾十行）
+week_list_df = _load_week_list()
+month_list_df = _load_month_list()
+
+# 頁面初始只載入最新 2 週（KPI 卡片用），趨勢圖在 tab 內按需載入
+_all_weeks_desc = list(zip(week_list_df["year"].astype(int), week_list_df["week"].astype(int))) if not week_list_df.empty else []
+_kpi_week_pairs = tuple(_all_weeks_desc[:2])  # 只要最新 2 週算 WoW
+
+# 載入 KPI 用的績效資料
+perf_df = load_performance_weeks(_kpi_week_pairs)
 
 # 解析 tags
 sellers_df["tags_list"] = sellers_df["tags"].apply(parse_tags)
@@ -232,7 +271,6 @@ with kpi_row[3]:
 
 # ── 圓餅圖：by Owner + by Tier ──
 if not filtered.empty:
-    import plotly.express as px
 
     include_mass = st.toggle("包含 MASS", value=False, key="chart_include_mass")
 
@@ -292,8 +330,6 @@ tab_perf, tab_sellers, tab_spark, tab_base = st.tabs([
 
 # ── Tab 1: Performance（群體切換 + WBR/MBR toggle）──
 with tab_perf:
-    import plotly.express as px
-    import plotly.graph_objects as go
 
     perf_group_col, perf_view_col = st.columns([2, 1])
     with perf_group_col:
@@ -317,9 +353,35 @@ with tab_perf:
 
     group_seller_count = len(_group_mcids)
 
+    # Lazy load: MBR 資料只在切到 MBR 時才載入
+    if view_choice == "MBR (Monthly)":
+        _all_months_desc = list(zip(
+            month_list_df["year"].astype(int), month_list_df["month"].astype(int)
+        )) if not month_list_df.empty else []
+        _recent_months = _all_months_desc[:6]
+        _ly_month_pairs = []
+        if _recent_months:
+            _max_year_m = _recent_months[0][0]
+            _recent_month_nums = {m for _, m in _recent_months if _ == _max_year_m}
+            _ly_month_pairs = [(y, m) for y, m in _all_months_desc if y == _max_year_m - 1 and m in _recent_month_nums]
+        _needed_month_pairs = tuple(set(_recent_months + _ly_month_pairs))
+        perf_monthly_df = load_performance_months(_needed_month_pairs)
+    else:
+        perf_monthly_df = pd.DataFrame()
+
     if view_choice == "WBR (Weekly)" and not perf_df.empty:
+        # Lazy load: 趨勢圖需要 8 週 + 去年同期，在 tab 內按需載入
+        _recent_8 = _all_weeks_desc[:8]
+        _ly_pairs = []
+        if _recent_8:
+            _max_year_w = _recent_8[0][0]
+            _recent_week_nums = {w for y, w in _recent_8 if y == _max_year_w}
+            _ly_pairs = [(y, w) for y, w in _all_weeks_desc if y == _max_year_w - 1 and w in _recent_week_nums]
+        _full_week_pairs = tuple(set(_recent_8 + _ly_pairs))
+        perf_full_df = load_performance_weeks(_full_week_pairs)
+
         # Weekly view
-        src = perf_df[perf_df["mcid"].isin(_group_mcids)].copy()
+        src = perf_full_df[perf_full_df["mcid"].isin(_group_mcids)].copy()
         if src.empty:
             st.info("此群體沒有 WBR 績效數據")
         else:
@@ -507,6 +569,9 @@ with tab_perf:
 
 # ── Tab 2: 賣家清單（含 Latest Note）──
 with tab_sellers:
+    # Lazy load notes
+    notes_df = load_notes()
+
     # 獨立篩選器
     sl_c1, sl_c2, sl_c3 = st.columns([1, 1, 2])
     with sl_c1:
@@ -530,8 +595,8 @@ with tab_sellers:
     if sl_df.empty:
         st.info("查無符合條件的賣家")
     else:
-        display_df = sl_df[["mcid", "name", "owner", "tier"]].copy()
-        display_df.columns = ["MCID", "名稱", "Owner", "Tier"]
+        display_df = sl_df[["mcid", "name", "owner", "tier", "q1_am", "q2_am"]].copy()
+        display_df.columns = ["MCID", "名稱", "Owner", "Tier", "Q1 AM", "Q2 AM"]
 
         # 加上最新績效
         if not perf_df.empty and _lw:
@@ -598,6 +663,7 @@ with tab_spark:
                 spark_display[c] = 0
 
         # 加上最新 note
+        notes_df = load_notes()
         if not notes_df.empty:
             latest_notes = notes_df.groupby("mcid").first().reset_index()[["mcid", "content", "created_at"]]
             latest_notes.columns = ["MCID", "Latest Note", "Note Date"]
