@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Smart Dashboard - 升級到 Git 版本</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Huninn&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-light: #ffffff;
+            --bg-dark: #232f3e;
+            --text-light: #0f1419;
+            --text-dark: #ffffff;
+            --border-light: #ddd;
+            --border-dark: #37475a;
+            --code-bg-light: #f8f9fa;
+            --link-light: #ff9900;
+            --tip-bg: #fff8f0;
+            --tip-border: #ff9900;
+            --warning-bg: #fff3e0;
+            --warning-border: #ff6f00;
+            --success-bg: #f1f8e9;
+            --success-border: #689f38;
+            --kiro-bg: #e3f2fd;
+            --kiro-border: #1976d2;
+        }
+
+        body {
+            font-family: 'Amazon Ember', 'Huninn', -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+            margin: 0;
+            background-color: var(--bg-light);
+            color: var(--text-light);
+            line-height: 1.6;
+        }
+
+        main {
+            max-width: 800px;
+            margin: 40px auto;
+            padding: 0 20px;
+        }
+
+        header {
+            text-align: center;
+            padding: 80px 20px;
+            background: var(--bg-dark);
+            color: var(--text-dark);
+            border-bottom: 5px solid;
+            border-image: linear-gradient(90deg, #232f3e 0%, #ff9900 50%, #232f3e 100%) 1;
+        }
+
+        header h1 {
+            font-family: "SF Mono", "Consolas", "Liberation Mono", Menlo, Courier, monospace;
+            font-size: 2.2em;
+            margin: 0;
+            background: linear-gradient(90deg, #ffffff 0%, #ff9900 50%, #ffffff 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        header p { margin-top: 15px; opacity: 0.9; }
+
+        h2 {
+            border-bottom: 1px solid var(--border-light);
+            padding-bottom: 0.3em;
+            margin-top: 40px;
+            font-size: 1.5em;
+        }
+
+        h3 { margin-top: 30px; color: #232f3e; font-size: 1.25em; font-weight: 600; }
+
+        hr { border: 0; height: 1px; background-color: var(--border-light); margin: 40px 0; }
+
+        a { color: var(--link-light); text-decoration: none; }
+        a:hover { text-decoration: underline; }
+
+        ul, ol { padding-left: 20px; }
+        li { margin-bottom: 8px; }
+
+        pre {
+            background-color: var(--code-bg-light);
+            padding: 16px;
+            border-radius: 6px;
+            overflow-x: auto;
+            border: 1px solid var(--border-light);
+            margin: 16px 0;
+        }
+
+        code {
+            font-family: "SF Mono", "Consolas", "Liberation Mono", Menlo, Courier, monospace;
+            font-size: 0.9em;
+            background-color: var(--code-bg-light);
+            padding: 2px 4px;
+            border-radius: 3px;
+        }
+
+        pre code { background-color: transparent; padding: 0; }
+
+        .tip-box {
+            background-color: var(--tip-bg);
+            border-left: 4px solid var(--tip-border);
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 0 6px 6px 0;
+        }
+
+        .warning-box {
+            background-color: var(--warning-bg);
+            border-left: 4px solid var(--warning-border);
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 0 6px 6px 0;
+        }
+
+        .success-box {
+            background-color: var(--success-bg);
+            border-left: 4px solid var(--success-border);
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 0 6px 6px 0;
+        }
+
+        .kiro-box {
+            background-color: var(--kiro-bg);
+            border-left: 4px solid var(--kiro-border);
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 0 6px 6px 0;
+        }
+
+        .tip-box strong, .warning-box strong, .success-box strong, .kiro-box strong {
+            display: block;
+            margin-bottom: 8px;
+            font-size: 1.1em;
+        }
+
+        .command-block {
+            background-color: #2d3748;
+            color: #e2e8f0;
+            padding: 12px 16px;
+            border-radius: 6px;
+            margin: 10px 0;
+            font-family: monospace;
+            position: relative;
+        }
+
+        .copy-btn {
+            position: absolute;
+            top: 8px;
+            right: 8px;
+            background: #4a5568;
+            color: white;
+            border: none;
+            padding: 4px 12px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.8em;
+        }
+
+        .copy-btn:hover {
+            background: #718096;
+        }
+
+        .section-icon { font-size: 1.2em; margin-right: 8px; }
+
+        .footer {
+            margin-top: 60px;
+            padding: 30px 0;
+            border-top: 1px solid var(--border-light);
+            text-align: center;
+            color: #666;
+            font-size: 0.9em;
+        }
+
+        .time-badge {
+            display: inline-block;
+            background: linear-gradient(90deg, #232f3e 0%, #ff9900 100%);
+            color: white;
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 0.9em;
+            margin-bottom: 20px;
+        }
+
+        .summary-table { width: 100%; border-collapse: collapse; margin: 20px 0; }
+        .summary-table td { padding: 15px; border: 1px solid var(--border-light); }
+        .summary-table td:first-child { background-color: #f8f9fa; font-weight: 600; width: 40%; }
+
+        .step-badge {
+            display: inline-block;
+            background: #232f3e;
+            color: white;
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 0.85em;
+            margin-right: 8px;
+        }
+
+        .kiro-prompt {
+            background-color: #1a1a2e;
+            color: #eee;
+            padding: 20px;
+            border-radius: 8px;
+            margin: 20px 0;
+            font-family: monospace;
+            font-size: 0.9em;
+            white-space: pre-wrap;
+            line-height: 1.8;
+            position: relative;
+        }
+
+        .kiro-prompt::before {
+            content: "KIRO Prompt";
+            position: absolute;
+            top: -10px;
+            left: 10px;
+            background: #1976d2;
+            color: white;
+            padding: 2px 10px;
+            border-radius: 4px;
+            font-size: 0.8em;
+        }
+
+        .divider {
+            display: flex;
+            align-items: center;
+            margin: 40px 0;
+        }
+
+        .divider::before, .divider::after {
+            content: "";
+            flex: 1;
+            height: 2px;
+            background: linear-gradient(90deg, transparent, #ff9900, transparent);
+        }
+
+        .divider span {
+            padding: 0 20px;
+            font-size: 1.2em;
+            font-weight: bold;
+            color: #232f3e;
+        }
+    </style>
+</head>
+<body>
+
+    <header>
+        <h1>Smart Dashboard 升級指南</h1>
+        <p>從舊版升級到 Git 版本，享受一鍵更新功能</p>
+    </header>
+
+    <main>
+        <div class="time-badge">預估時間：5-10 分鐘（大部分由 KIRO 自動完成）</div>
+
+        <section id="overview">
+            <h2><span class="section-icon">📋</span>升級流程總覽</h2>
+
+            <table class="summary-table">
+                <tr>
+                    <td><span class="step-badge">你做</span> 安裝 Git</td>
+                    <td>下載並安裝 Git（只需做一次）</td>
+                </tr>
+                <tr>
+                    <td><span class="step-badge">KIRO 做</span> 其餘步驟</td>
+                    <td>備份資料、下載新版、安裝環境、還原資料</td>
+                </tr>
+            </table>
+
+            <div class="tip-box">
+                <strong>升級後的好處</strong>
+                <ul>
+                    <li><strong>一鍵更新</strong> - 以後有新版本，雙擊 <code>update.bat</code> 就搞定</li>
+                    <li><strong>不用再傳檔案</strong> - 不用等人傳 zip、不用解壓縮覆蓋</li>
+                    <li><strong>客戶資料不受影響</strong> - 你的 uploaded_data 會保留</li>
+                </ul>
+            </div>
+        </section>
+
+        <div class="divider"><span>PART 1：你要做的事</span></div>
+
+        <section id="install-git">
+            <h2><span class="section-icon">📥</span>安裝 Git（只需做一次）</h2>
+
+            <h3>Step 1：下載 Git</h3>
+            <p>點擊下載：<a href="https://git-scm.com/download/win" target="_blank">https://git-scm.com/download/win</a></p>
+            <p>選擇 <strong>「64-bit Git for Windows Setup」</strong></p>
+
+            <h3>Step 2：安裝</h3>
+            <ol>
+                <li>執行下載的安裝檔</li>
+                <li><strong>全部按 Next 到底</strong>（不用改任何設定）</li>
+                <li>按 Install，等待完成</li>
+                <li>按 Finish</li>
+            </ol>
+
+            <h3>Step 3：確認安裝成功</h3>
+            <ol>
+                <li>按 <code>Win + R</code>，輸入 <code>cmd</code>，按 Enter</li>
+                <li>在黑色視窗輸入：<code>git --version</code></li>
+                <li>看到版本號（如 <code>git version 2.43.0</code>）就是成功</li>
+            </ol>
+
+            <div class="success-box">
+                <strong>安裝完成！</strong>
+                接下來的步驟交給 KIRO 處理
+            </div>
+        </section>
+
+        <div class="divider"><span>PART 2：交給 KIRO</span></div>
+
+        <section id="kiro-instructions">
+            <h2><span class="section-icon">🤖</span>讓 KIRO 完成升級</h2>
+
+            <p>Git 安裝好之後，把下面整段文字<strong>複製貼給 KIRO</strong>：</p>
+
+            <div class="kiro-prompt" id="kiro-prompt">請幫我把 Smart Dashboard 從舊版升級到 Git 版本。
+
+【前提檢查】
+1. 先執行 git --version 確認 Git 已安裝
+2. 如果沒有安裝，請告訴我先手動安裝 Git：https://git-scm.com/download/win
+
+【找到舊資料夾】
+- 我的 Smart Dashboard 舊資料夾名稱類似 smart_dashboard_xxxxxx（有日期後綴）
+- 通常在桌面或文件資料夾
+- 請幫我找到它的完整路徑
+
+【升級步驟】（Git 已安裝的情況下執行）
+
+Step 1：備份客戶資料
+- 把舊資料夾裡的 uploaded_data 資料夾複製到桌面，命名為 uploaded_data_backup
+
+Step 2：下載新版本
+- 在桌面執行：git clone https://github.com/yihsuanwei/smart-dashboard.git
+- 這會建立一個新的 smart-dashboard 資料夾
+
+Step 3：安裝 Python 環境
+- 進入 smart-dashboard 資料夾
+- 執行 setup.bat（用 call setup.bat 或直接執行）
+- 等待安裝完成
+
+Step 4：還原客戶資料
+- 把桌面的 uploaded_data_backup 資料夾
+- 複製到 smart-dashboard 資料夾內
+- 並重新命名為 uploaded_data（覆蓋原本的空資料夾）
+
+Step 5：測試啟動
+- 執行 start.bat 確認可以正常啟動
+- 看到 Dashboard 開啟就表示成功
+
+【完成後告訴我】
+1. 新的 Smart Dashboard 在哪裡（完整路徑）
+2. 以後要用 Dashboard 就雙擊 start.bat
+3. 收到更新通知就雙擊 update.bat
+4. 舊的 smart_dashboard_xxxxxx 資料夾可以刪除了
+5. 桌面的 uploaded_data_backup 也可以刪除了</div>
+
+            <button class="copy-btn" onclick="copyKiroPrompt()">複製</button>
+
+            <div class="kiro-box">
+                <strong>KIRO 會幫你做什麼？</strong>
+                <ul>
+                    <li>檢查 Git 是否安裝</li>
+                    <li>找到你的舊 Smart Dashboard 資料夾</li>
+                    <li>備份你的客戶資料（uploaded_data）</li>
+                    <li>從 GitHub 下載最新版本</li>
+                    <li>安裝 Python 環境</li>
+                    <li>還原你的客戶資料</li>
+                    <li>測試確認可以正常使用</li>
+                </ul>
+            </div>
+        </section>
+
+        <hr>
+
+        <section id="after-upgrade">
+            <h2><span class="section-icon">🎉</span>升級完成後</h2>
+
+            <table class="summary-table">
+                <tr>
+                    <td>想用 Dashboard</td>
+                    <td>雙擊 <code>start.bat</code></td>
+                </tr>
+                <tr>
+                    <td>收到更新通知</td>
+                    <td>雙擊 <code>update.bat</code></td>
+                </tr>
+            </table>
+
+            <div class="success-box">
+                <strong>就這樣！</strong>
+                以後只要記得這兩個 bat 檔就好，超簡單
+            </div>
+        </section>
+
+        <hr>
+
+        <section id="troubleshooting">
+            <h2><span class="section-icon">❓</span>常見問題</h2>
+
+            <h3>Q：KIRO 說找不到 Git？</h3>
+            <p>請確認 Git 安裝完成後，<strong>重新開啟</strong> cmd 或 KIRO，再試一次。</p>
+
+            <h3>Q：舊資料夾刪不掉？</h3>
+            <p>請先關閉所有 Smart Dashboard 視窗和相關程式，再刪除。</p>
+
+            <h3>Q：setup.bat 執行失敗？</h3>
+            <p>可能是 Python 沒有安裝。請先安裝 Python 3.10+：<a href="https://www.python.org/downloads/" target="_blank">https://www.python.org/downloads/</a></p>
+            <p>安裝時記得勾選「Add Python to PATH」</p>
+
+            <h3>Q：升級後客戶資料不見了？</h3>
+            <p>檢查桌面是否有 uploaded_data_backup，把它複製回 smart-dashboard 資料夾即可。</p>
+        </section>
+
+        <div class="footer">
+            Smart Dashboard v3.3.0 | 2026-01-27 | 有問題請聯繫 Ivory
+        </div>
+    </main>
+
+    <script>
+        function copyKiroPrompt() {
+            const text = document.getElementById('kiro-prompt').innerText;
+            navigator.clipboard.writeText(text).then(() => {
+                const btn = document.querySelector('.copy-btn');
+                btn.textContent = '已複製！';
+                setTimeout(() => {
+                    btn.textContent = '複製';
+                }, 2000);
+            });
+        }
+    </script>
+
+</body>
+</html>

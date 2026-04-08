@@ -4,7 +4,7 @@ from pathlib import Path
 from utils import (list_uploaded_files, load_data, UPLOAD_DIR, FILE_TYPES,
                    detect_file_type, scan_sellers_from_files,
                    load_seller_registry, save_seller_registry,
-                   _extract_seller_name)
+                   _extract_seller_name, save_with_parquet)
 
 
 def normalize_customer_id(series: pd.Series) -> pd.Series:
@@ -102,8 +102,8 @@ def process_and_save(uploaded_file, file_type, custom_filename,
 
     # 儲存
     try:
-        df.to_csv(target_path, index=False, encoding="utf-8")
-        return True, f"✅ {final_filename} → {file_type}（{original_count} → {len(df)} 筆）"
+        save_with_parquet(df, target_path)
+        return True, f"{final_filename} → {file_type}（{original_count} → {len(df)} 筆）"
     except Exception as e:
         return False, f"存檔失敗: {str(e)}"
 
@@ -134,8 +134,8 @@ def mcid_dialog(seller_keys):
 
 
 # ===== Streamlit UI =====
-st.set_page_config(page_title="Smart Dashboard - 資料處理", page_icon="📊", layout="wide")
-st.title("📤 資料處理中心")
+st.set_page_config(page_title="Smart Dashboard - 資料處理", page_icon=":material/upload:", layout="wide")
+st.title(":material/upload: 資料處理中心")
 st.markdown("上傳CSV檔案並進行資料處理，處理後的檔案可在其他頁面中使用")
 
 UPLOAD_DIR.mkdir(exist_ok=True)
@@ -144,7 +144,7 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 col1, col2 = st.columns([1, 1])
 
 with col1:
-    st.subheader("📁 檔案上傳")
+    st.subheader(":material/upload_file: 檔案上傳")
 
     # 動態 key：上傳成功後遞增，強制重置 file_uploader
     if 'uploader_key' not in st.session_state:
@@ -167,9 +167,9 @@ with col1:
 
         for idx, uf in enumerate(uploaded_files):
             detected = detect_file_type(uf.name)
-            detected_label = detected if detected else "⚠️ 無法辨識"
+            detected_label = detected if detected else ":material/warning: 無法辨識"
 
-            with st.expander(f"📄 {uf.name}　→　{detected_label}", expanded=(detected is None)):
+            with st.expander(f":material/description: {uf.name}　→　{detected_label}", expanded=(detected is None)):
                 # 文件類型選擇（預設為偵測結果）
                 type_options = list(FILE_TYPES.keys())
                 if detected and detected in type_options:
@@ -194,7 +194,7 @@ with col1:
                 if safe_fn:
                     check_path = UPLOAD_DIR / FILE_TYPES[file_type] / f"{safe_fn}.csv"
                     if check_path.exists():
-                        st.warning(f"⚠️ 檔案已存在，上傳會覆蓋")
+                        st.warning("檔案已存在，上傳會覆蓋")
 
                 file_configs.append({
                     "file": uf,
@@ -215,7 +215,7 @@ with col1:
 
         if has_p0:
             st.divider()
-            st.markdown("#### ⚙️ P0 MCID MBR 處理選項")
+            st.markdown("#### :material/settings: P0 MCID MBR 處理選項")
             st.caption("以下選項會套用到所有 P0 MCID MBR 類型的檔案")
 
             option_filter_owner = st.checkbox(
@@ -248,7 +248,7 @@ with col1:
 
         # --- 上傳按鈕 ---
         st.divider()
-        if st.button("🚀 全部上傳並處理", type="primary", use_container_width=True):
+        if st.button("全部上傳並處理", type="primary", use_container_width=True, icon=":material/cloud_upload:"):
             results = []
             progress = st.progress(0)
             for i, cfg in enumerate(file_configs):
@@ -315,7 +315,7 @@ with col1:
 
 
 with col2:
-    st.subheader("📋 已上傳的檔案")
+    st.subheader(":material/folder_open: 已上傳的檔案")
     existing_files = list_uploaded_files()
 
     if not existing_files:
@@ -328,7 +328,7 @@ with col2:
                     file_type_display = type_name
                     break
 
-            with st.expander(f"📄 {file_path.name} ({file_type_display})"):
+            with st.expander(f":material/description: {file_path.name} ({file_type_display})"):
                 file_stats = file_path.stat()
                 col_info, col_action = st.columns([3, 1])
 
@@ -338,7 +338,7 @@ with col2:
                     st.write(f"**修改時間:** {pd.Timestamp.fromtimestamp(file_stats.st_mtime).strftime('%Y-%m-%d %H:%M')}")
 
                 with col_action:
-                    if st.button(f"🗑️ 刪除", key=f"delete_{i}"):
+                    if st.button("刪除", key=f"delete_{i}", icon=":material/delete:"):
                         try:
                             file_path.unlink()
                             st.success("檔案已刪除")

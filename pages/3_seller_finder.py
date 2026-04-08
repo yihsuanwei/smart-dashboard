@@ -1,12 +1,12 @@
 import streamlit as st
-from utils import load_data, list_uploaded_files
+from utils import load_data_fast, list_uploaded_files
 import pandas as pd
 import plotly.express as px
 
 
 def create_filters(df):
     """創建篩選器"""
-    st.sidebar.header("📋 數據篩選")
+    st.sidebar.header(":material/filter_list: 數據篩選")
 
     # 數據概覽
     st.sidebar.metric("總行數", len(df))
@@ -15,7 +15,7 @@ def create_filters(df):
     filters = {}
 
     # Basic 分類
-    st.sidebar.subheader("🔹 Basic")
+    st.sidebar.subheader("Basic")
     basic_fields = ['calendar_year', 'calendar_month', 'marketplace_id', 'launch_channel']
     for field in basic_fields:
         if field in df.columns:
@@ -64,10 +64,10 @@ def create_filters(df):
                 if start_date != min_date or end_date != max_date:
                     filters['launch_date'] = (start_date, end_date)
         except Exception as e:
-            st.sidebar.warning(f"⚠️ Launch Date 欄位格式錯誤: {str(e)}")
+            st.sidebar.warning(f"Launch Date 欄位格式錯誤: {str(e)}")
 
     # GMS 分類
-    st.sidebar.subheader("💰 YTD GMS")
+    st.sidebar.subheader("YTD GMS")
     if 'ytd_ord_gms' in df.columns:
         ytd_gms_data = df['ytd_ord_gms'].dropna()
         if not ytd_gms_data.empty:
@@ -96,7 +96,7 @@ def create_filters(df):
                 filters['ytd_ord_gms'] = (min_gms_input, max_gms_input)
 
     # MTD GMS 分類
-    st.sidebar.subheader("💰 MTD GMS")
+    st.sidebar.subheader("MTD GMS")
     if 'mtd_ord_gms' in df.columns:
         mtd_gms_data = df['mtd_ord_gms'].dropna()
         if not mtd_gms_data.empty:
@@ -125,7 +125,7 @@ def create_filters(df):
                 filters['mtd_ord_gms'] = (min_mtd_gms_input, max_mtd_gms_input)
 
     # Ads 分類
-    st.sidebar.subheader("📢 Ads")
+    st.sidebar.subheader("Ads")
 
     # mtd_TACoS 使用輸入框
     if 'mtd_TACoS' in df.columns:
@@ -173,7 +173,7 @@ def create_filters(df):
                     filters[field] = selected
 
     # Selection funnel 分類
-    st.sidebar.subheader("🎯 Selection Funnel")
+    st.sidebar.subheader("Selection funnel")
 
     # New BA Percentile
     if 'mtd_new_fba_ba_90d' in df.columns:
@@ -240,7 +240,7 @@ def create_filters(df):
             filters['ba_awas_ratio'] = (ba_awas_filter, threshold)
 
     # Feature adoption 分類
-    st.sidebar.subheader("⚡ Feature Adoption")
+    st.sidebar.subheader("Feature adoption")
     feature_fields = ['is_brand_rep', 'ytd_pl_launch', 'is_aplus_adopt', 'vine_launch_90days', 'ytd_fba_adopt', 'ytd_coupon_adopt']
     for field in feature_fields:
         if field in df.columns:
@@ -359,7 +359,7 @@ def apply_filters(df, filters):
 
 def create_visualizations(df):
     """創建視覺化圖表"""
-    st.header("📈 數據視覺化")
+    st.header(":material/bar_chart: 數據視覺化")
 
     # 選擇要視覺化的欄位
     numeric_columns = df.select_dtypes(include=['int64', 'float64']).columns.tolist()
@@ -413,7 +413,7 @@ def show_original_analysis_tab(df, selected_file):
     filtered_df = apply_filters(final_df, filters)
 
     # 顯示篩選後的結果
-    st.header(f"🔍 篩選結果 ({len(filtered_df)} / {len(final_df)} 行)")
+    st.header(f":material/search: 篩選結果 ({len(filtered_df)} / {len(final_df)} 行)")
 
     if len(filtered_df) != len(final_df):
         st.info(f"已篩選掉 {len(final_df) - len(filtered_df)} 行數據")
@@ -423,7 +423,7 @@ def show_original_analysis_tab(df, selected_file):
 
     # 📊 關鍵指標統計
     if not filtered_df.empty:
-        st.subheader("📊 關鍵指標統計")
+        st.subheader("關鍵指標統計")
 
         # 取得所有數值型欄位
         all_numeric_columns = filtered_df.select_dtypes(include=['int64', 'float64']).columns.tolist()
@@ -483,7 +483,7 @@ def show_original_analysis_tab(df, selected_file):
                     # 顯示標題和定義
                     st.markdown(f"**{display_name}**")
                     if definition:
-                        st.caption(f"💡 {definition}")
+                        st.caption(definition)
 
                     # 創建兩欄佈局
                     chart_col1, chart_col2 = st.columns(2)
@@ -570,7 +570,7 @@ def show_original_analysis_tab(df, selected_file):
 
             # 詳細統計表格
             if len(available_stats) > 0:
-                st.markdown("#### 📋 詳細統計表")
+                st.markdown("#### 詳細統計表")
                 stats_data = []
 
                 for col_name in available_stats:
@@ -620,7 +620,7 @@ def show_original_analysis_tab(df, selected_file):
                     stats_df = pd.DataFrame(stats_data)
                     st.dataframe(stats_df, use_container_width=True, hide_index=True)
         else:
-            st.info("⚠️ 請在上方的「選擇要分析的指標」中選擇至少一個數值欄位來查看統計資訊")
+            st.info("請在上方的「選擇要分析的指標」中選擇至少一個數值欄位來查看統計資訊")
 
     # 篩選後的數據預覽和下載
     if not filtered_df.empty:
@@ -661,7 +661,7 @@ def show_original_analysis_tab(df, selected_file):
 
             # Customer ID 篩選功能
             customer_id_input = st.text_input(
-                "🔍 指定 CID",
+                ":material/search: 指定 CID",
                 placeholder="12345,56788",
                 key="customer_id_filter"
             )
@@ -691,7 +691,8 @@ def show_original_analysis_tab(df, selected_file):
             # 下載按鈕（使用最終篩選後的數據）
             csv_data = final_display_df.to_csv(index=False, encoding='utf-8')
             st.download_button(
-                label="💾 下載篩選後的數據",
+                label="下載篩選後的數據",
+                icon=":material/download:",
                 data=csv_data,
                 file_name=f"filtered_{selected_file['name']}",
                 mime="text/csv"
@@ -700,7 +701,7 @@ def show_original_analysis_tab(df, selected_file):
             st.warning("請至少選擇一個欄位來顯示數據")
 
     # 篩選：排除指定的 MCID
-    st.header("🚫 排除指定的 MCID")
+    st.header(":material/block: 排除指定的 MCID")
 
     exclude_input = st.text_area(
         "貼上要排除的 Customer ID (可用逗號或換行分隔)",
@@ -720,7 +721,7 @@ def show_original_analysis_tab(df, selected_file):
         final_filtered_df = final_filtered_df[~final_filtered_df["merchant_customer_id"].astype(str).isin(exclude_ids)]
         after = len(final_filtered_df)
 
-        st.success(f"✅ 已排除 {len(exclude_ids)} 個 CID，篩選後剩下 {after} 筆 (原本 {before})")
+        st.success(f"已排除 {len(exclude_ids)} 個 CID，篩選後剩下 {after} 筆 (原本 {before})")
 
         # 預覽結果
         st.dataframe(final_filtered_df.head(100), use_container_width=True)
@@ -728,7 +729,8 @@ def show_original_analysis_tab(df, selected_file):
         # 提供下載
         csv_data = final_filtered_df.to_csv(index=False, encoding="utf-8")
         st.download_button(
-            label="💾 下載排除後的數據",
+            label="下載排除後的數據",
+            icon=":material/download:",
             data=csv_data,
             file_name=f"excluded_filtered_{selected_file['name']}",
             mime="text/csv",
@@ -736,8 +738,8 @@ def show_original_analysis_tab(df, selected_file):
         )
 
 
-st.set_page_config(page_title="Seller Finder", page_icon="🔍", layout="wide")
-st.title("🔍 Seller Finder")
+st.set_page_config(page_title="Seller Finder", page_icon=":material/person_search:", layout="wide")
+st.title(":material/person_search: Seller Finder")
 
 # 初始化 session_state 來保存數據
 if 'quick_glance_loaded_data' not in st.session_state:
@@ -758,7 +760,7 @@ if files:
         if st.session_state.quick_glance_filename != selected_name:
             # 檔案改變了，需要重新讀取
             selected_file = file_options[selected_name]
-            df, error = load_data(selected_file)
+            df, error = load_data_fast(selected_file)
             if error:
                 st.error(error)
             elif df is not None and not df.empty:
@@ -767,7 +769,7 @@ if files:
                 st.session_state.quick_glance_filename = selected_name
                 show_original_analysis_tab(df, {"name": selected_name, "size": selected_file.stat().st_size})
             else:
-                st.warning("⚠️ 無法讀取檔案或檔案為空")
+                st.warning("無法讀取檔案或檔案為空")
         else:
             # 使用快取的數據
             if st.session_state.quick_glance_loaded_data is not None:

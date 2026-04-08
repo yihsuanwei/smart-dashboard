@@ -1,5 +1,5 @@
 import streamlit as st
-from utils import list_uploaded_files, load_data
+from utils import list_uploaded_files, load_data_fast
 import pandas as pd
 
 import base64
@@ -437,8 +437,8 @@ def calculate_yoy_mom_from_df(df, column_name, current_year, current_month):
     return current_value, yoy_change, mom_change
 
 
-st.set_page_config(page_title="Performance Dashboard", page_icon="📊", layout="wide")
-st.title("📊 Performance Dashboard")
+st.set_page_config(page_title="Performance Dashboard", page_icon=":material/analytics:", layout="wide")
+st.title(":material/analytics: Performance Dashboard")
 
 # 增加空間
 st.markdown("<div style='margin: 40px 0;'></div>", unsafe_allow_html=True)
@@ -502,7 +502,7 @@ if seller_list:
         if auto_file:
             cache_key = f"{current_seller_key}_{file_type}_{auto_file.name}"
             if st.session_state.get(f"{file_type}_cache_key") != cache_key:
-                df, error = load_data(auto_file)
+                df, error = load_data_fast(auto_file)
                 if error is None:
                     st.session_state.multi_file_loaded_data[file_type] = df
                     st.session_state[f"{file_type}_cache_key"] = cache_key
@@ -514,7 +514,7 @@ if seller_list:
 
 else:
     # 沒有偵測到賣家時，顯示手動選擇模式
-    st.info("💡 尚未偵測到任何賣家。請先到「資料處理中心」上傳檔案（檔名需包含賣家名稱）。")
+    st.info("尚未偵測到任何賣家。請先到「資料處理中心」上傳檔案（檔名需包含賣家名稱）。", icon=":material/info:")
 
     col1, col2 = st.columns(2)
     col3, col4 = st.columns(2)
@@ -522,7 +522,7 @@ else:
 
     for i, file_type in enumerate(file_types):
         with columns[i]:
-            st.markdown(f"**📁 {file_type}**")
+            st.markdown(f"**{file_type}**")
             files = list_uploaded_files(file_type)
 
             if files:
@@ -539,7 +539,7 @@ else:
 
                     cache_key = f"{file_type}_filename"
                     if cache_key not in st.session_state or st.session_state[cache_key] != selected_name:
-                        df, error = load_data(selected_file)
+                        df, error = load_data_fast(selected_file)
                         if error:
                             st.error(f"無法讀取檔案: {error}")
                         else:
@@ -557,7 +557,7 @@ if "Sales Traffic Report" in loaded_data:
     # 標題與年份選擇器並排
     header_col, year_select_col = st.columns([3, 1])
     with header_col:
-        st.header("📈 Overall Sales Summary")
+        st.header("Overall Sales Summary")
 
     # 從 Sales Traffic Report 取得可用年份
     available_years = []
@@ -801,10 +801,10 @@ if "Sales Traffic Report" in loaded_data:
                 year_columns = {str(year): year for year in available_years}
 
             except Exception as e:
-                st.error(f"⚠️ 處理 Sales Traffic Report 資料時發生錯誤: {str(e)}")
+                st.error(f"處理 Sales Traffic Report 資料時發生錯誤: {str(e)}")
                 year_columns = {}
         else:
-            st.warning("⚠️ Sales Traffic Report 缺少必要欄位 (Date, Ordered Product Sales)")
+            st.warning("Sales Traffic Report 缺少必要欄位 (Date, Ordered Product Sales)")
             year_columns = {}
 
         if year_columns:
@@ -1649,7 +1649,7 @@ if "Sales Traffic Report" in loaded_data:
                     
                     with col_peak:
                         peak_months_str = st.text_input(
-                            "🔥 旺季月份",
+                            "旺季月份",
                             value=st.session_state[peak_months_key],
                             placeholder="例如: 3-5, 11-12",
                             key=f"peak_months_input_{this_year}",
@@ -1665,7 +1665,7 @@ if "Sales Traffic Report" in loaded_data:
                                        7:'Jul',8:'Aug',9:'Sep',10:'Oct',11:'Nov',12:'Dec'}
                         peak_display = ', '.join(month_names[m] for m in sorted(current_peak_months))
                         with col_peak:
-                            st.caption(f"🔥 {peak_display}")
+                            st.caption(f"{peak_display}")
                     
                     # 檢查旺季設定是否改變
                     peak_months_changed = st.session_state[peak_months_key] != peak_months_str
@@ -1693,7 +1693,7 @@ if "Sales Traffic Report" in loaded_data:
                     }
                     for month in all_months:
                         editable_column_config[month] = st.column_config.NumberColumn(
-                            f'✏️ {month}',
+                            f'{month}',
                             min_value=0,  # 目標 YoY 不可為負
                             max_value=500,
                             step=1,  # 整數步進
@@ -1782,7 +1782,7 @@ if "Sales Traffic Report" in loaded_data:
                                     100% { opacity: 0; transform: translateY(-10px); }
                                 }
                             </style>
-                            <div class="custom-toast">✅ Saved!</div>
+                            <div class="custom-toast">Saved</div>
                             """, unsafe_allow_html=True)
 
                     # 檢查是否有變更（只有在沒有按鈕被點擊時才處理）
@@ -1799,18 +1799,18 @@ if "Sales Traffic Report" in loaded_data:
                     if current_file_key in all_targets and str(this_year) in all_targets[current_file_key]:
                         last_modified = all_targets[current_file_key][str(this_year)].get('modified_at')
                         if last_modified:
-                            st.caption(f"💾 Last saved: {last_modified}")
+                            st.caption(f"Last saved: {last_modified}")
                 else:
-                    st.info("⚠️ 需要至少兩年的資料才能設定目標")
+                    st.info("需要至少兩年的資料才能設定目標")
 
             else:
-                st.warning("⚠️ 請至少選擇一個年份")
+                st.warning("請至少選擇一個年份")
         else:
-            st.warning("⚠️ 未在資料中找到年份欄位")
+            st.warning("未在資料中找到年份欄位")
 
 # Business Metrics 區塊
 if "Sales Traffic Report" in loaded_data:
-    st.header("📊 Business Metrics")
+    st.header(":material/bar_chart: Business Metrics")
 
     sales_df = loaded_data["Sales Traffic Report"]
 
@@ -1887,7 +1887,7 @@ if "Sales Traffic Report" in loaded_data:
 
         if not filtered_sales_df.empty:
             # Sales Widget
-            st.subheader(f"📈 {selected_date}")
+            st.subheader(f"{selected_date}")
 
             # 創建 widget 欄位
             metric_col1, metric_col2, metric_col3 = st.columns(3)
@@ -1938,7 +1938,7 @@ if "Sales Traffic Report" in loaded_data:
 
         # 在 L819 之後添加圖表區塊
         st.markdown("---")
-        st.subheader("📈 Business Metrics Trends")
+        st.subheader("Business Metrics Trends")
 
         # 獲取所有數值欄位（排除日期欄位）
         numeric_columns = []
@@ -2091,7 +2091,7 @@ if "Sales Traffic Report" in loaded_data:
 # ASIN Level 區塊
 if "Asin Report" in loaded_data:
     st.markdown("---")
-    st.header("📦 ASIN Level")
+    st.header(":material/inventory_2: ASIN Level")
 
     asin_df = loaded_data["Asin Report"]
 
@@ -2105,7 +2105,7 @@ if "Asin Report" in loaded_data:
         </style>
     """, unsafe_allow_html=True)
 
-    tab1, tab2, tab3 = st.tabs(["📊 Complete ASIN Data", "📈 Trend", "🏢 B2B"])
+    tab1, tab2, tab3 = st.tabs([":material/table_chart: Complete ASIN Data", ":material/trending_up: Trend", ":material/business: B2B"])
 
     # ==================== Tab 3: B2B 分析 ====================
     with tab3:
@@ -2370,7 +2370,7 @@ if "Asin Report" in loaded_data:
 
         # ASIN Sales 圓餅圖
         st.markdown("---")
-        st.subheader("📊 ASIN Sales Contribution")
+        st.subheader("ASIN Sales Contribution")
 
         if 'Sales Contribution %' in asin_df.columns and 'Child ASIN' in asin_df.columns:
             import plotly.graph_objects as go
@@ -2429,7 +2429,7 @@ if "Asin Report" in loaded_data:
                 top_asins = pie_data.nlargest(3, 'Sales Contribution %')
                 st.markdown("**主力 ASIN TOP 3:**")
                 for idx, row in top_asins.iterrows():
-                    st.write(f"🏆 **{row['Child ASIN']}**: {row['Sales Contribution %']:.2f}%")
+                    st.write(f"**{row['Child ASIN']}**: {row['Sales Contribution %']:.2f}%")
 
                 # 顯示完整的資料表格
                 st.markdown("---")
@@ -2457,10 +2457,10 @@ if "Asin Report" in loaded_data:
                     else:
                         # 預設 Tag 清單
                         st.session_state.asin_tags_config = [
-                            "🔴 重點關注",
-                            "🟡 待優化",
-                            "🟢 表現良好",
-                            "🔵 新品"
+                            "重點關注",
+                            "待優化",
+                            "表現良好",
+                            "新品"
                         ]
 
                 # 添加 expander 背景樣式
@@ -2488,19 +2488,19 @@ if "Asin Report" in loaded_data:
                 """, unsafe_allow_html=True)
 
                 # 標記工具 UI
-                with st.expander("⚙️ ASIN 設定與標記", expanded=False):
+                with st.expander(":material/settings: ASIN 設定與標記", expanded=False):
 
                     # ===== ASIN 標記區塊 =====
-                    with st.expander("🏷️ ASIN 標記", expanded=False):
+                    with st.expander(":material/label: ASIN 標記", expanded=False):
 
                         # 管理 Tag 子區塊
-                        st.markdown("**➕ 新增 Tag**")
+                        st.markdown("**新增 Tag**")
                         tag_col1, tag_col2 = st.columns([3, 1])
                         with tag_col1:
                             new_tag_name = st.text_input(
                                 "輸入 Tag 名稱",
                                 key="new_tag_name_input",
-                                placeholder="例如: 🟣 高優先級、⭐ 明星商品"
+                                placeholder="例如: 高優先級、明星商品"
                             )
                         with tag_col2:
                             st.markdown("<div style='margin-bottom: 8px;'>&nbsp;</div>", unsafe_allow_html=True)
@@ -2546,10 +2546,10 @@ if "Asin Report" in loaded_data:
 
                         if st.button("重置為預設 Tag", key="reset_tags"):
                             st.session_state.asin_tags_config = [
-                                "🔴 重點關注",
-                                "🟡 待優化",
-                                "🟢 表現良好",
-                                "🔵 新品"
+                                "重點關注",
+                                "待優化",
+                                "表現良好",
+                                "新品"
                             ]
                             with open(tags_file, 'w', encoding='utf-8') as f:
                                 json.dump(st.session_state.asin_tags_config, f, ensure_ascii=False, indent=2)
@@ -2559,7 +2559,7 @@ if "Asin Report" in loaded_data:
                         st.markdown("---")
 
                         # 標記 ASIN 子區塊
-                        st.markdown("**✏️ 標記 ASIN**")
+                        st.markdown("**標記 ASIN**")
                         col_a, col_b, col_c = st.columns([4, 3, 2])
                         with col_a:
                             mark_asin = st.text_input("輸入 ASIN", key="mark_asin_input", placeholder="例如: B0DNK675T9")
@@ -2601,18 +2601,18 @@ if "Asin Report" in loaded_data:
                                 st.text(f"{label} {asin}")
 
                     # ===== 顯示設定區塊 =====
-                    with st.expander("📊 顯示設定", expanded=False):
+                    with st.expander(":material/tune: 顯示設定", expanded=False):
                         st.markdown("**選擇要顯示的欄位群組**")
 
                         col1, col2 = st.columns(2)
                         with col1:
-                            show_b2b = st.checkbox("🏢 B2B 數據", value=False, key="show_b2b_columns")
-                            show_comparison = st.checkbox("📈 同期比較", value=True, key="show_comparison_columns")
+                            show_b2b = st.checkbox("B2B 數據", value=False, key="show_b2b_columns")
+                            show_comparison = st.checkbox("同期比較", value=True, key="show_comparison_columns")
                         with col2:
-                            show_inventory = st.checkbox("📦 庫存資訊", value=True, key="show_inventory_columns")
-                            show_percentage = st.checkbox("📊 變化百分比", value=True, key="show_percentage_columns")
+                            show_inventory = st.checkbox("庫存資訊", value=True, key="show_inventory_columns")
+                            show_percentage = st.checkbox("變化百分比", value=True, key="show_percentage_columns")
 
-                        st.info("💡 取消勾選的欄位群組將在下方表格中隱藏")
+                        st.info("取消勾選的欄位群組將在下方表格中隱藏", icon=":material/info:")
 
                 # 顯示所有欄位的完整資料
                 display_df = asin_df.copy()
@@ -2989,7 +2989,7 @@ if "Asin Report" in loaded_data:
                     top_3_ytd = trend_df.nlargest(3, '_ytd_total')['Child ASIN'].tolist()
 
                     # ASIN 選擇器與趨勢圖（放在前面）
-                    st.markdown("**📈 銷售趨勢圖**")
+                    st.markdown("**銷售趨勢圖**")
 
                     # 預設顯示模式切換
                     default_mode = st.radio(
@@ -3009,10 +3009,10 @@ if "Asin Report" in loaded_data:
                     # 顯示 TOP 10 表格（並排）
                     col1, col2 = st.columns(2)
                     with col1:
-                        st.markdown(f"**📊 最新月份 TOP 10** ({latest_month})")
+                        st.markdown(f"**最新月份 TOP 10** ({latest_month})")
                         st.dataframe(top_10_latest_df, use_container_width=True, hide_index=True, column_config=column_config)
                     with col2:
-                        st.markdown("**🏆 YTD TOP 10**")
+                        st.markdown("**YTD TOP 10**")
                         st.dataframe(top_10_ytd_df, use_container_width=True, hide_index=True, column_config=column_config)
 
                     # 根據模式決定預設 ASIN（都只選 3 個）
@@ -3094,7 +3094,7 @@ if "Asin Report" in loaded_data:
 
                     # 顯示資料表（放在趨勢圖後面）
                     st.markdown("---")
-                    st.markdown("**📊 月度銷售資料表**")
+                    st.markdown("**月度銷售資料表**")
                     # 只顯示 Child ASIN 和月份欄位，排除所有輔助欄位
                     display_columns = ['Child ASIN'] + month_columns
                     display_df = trend_df[display_columns].copy()
@@ -3112,7 +3112,7 @@ if "Asin Report" in loaded_data:
             st.info("""
             📌 **如何使用 ASIN 趨勢分析：**
 
-            1. 使用油猴腳本的「📈 下載 ASIN 趨勢 (YTD)」按鈕下載趨勢資料
+            1. 使用油猴腳本的「下載 ASIN 趨勢 (YTD)」按鈕下載趨勢資料
             2. 前往 **Upload** 頁面上傳 ASIN Trend (YTD) 檔案
             3. 資料會自動顯示在此區塊
             """)
@@ -3120,7 +3120,7 @@ if "Asin Report" in loaded_data:
 # Advertising & Merchandising 區塊
 if "P0 MCID MBR" in loaded_data:
     st.markdown("---")
-    st.header("📢 Advertising & Merchandising")
+    st.header(":material/campaign: Advertising & Merchandising")
 
     ads_df = loaded_data["P0 MCID MBR"]
 

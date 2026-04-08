@@ -22,7 +22,7 @@ for folder_name in FILE_TYPES.values():
     (UPLOAD_DIR / folder_name).mkdir(exist_ok=True)
 
 def load_data(file):
-    """讀取 CSV"""
+    """讀取 CSV（上傳時用，file 是 UploadedFile 或 Path）"""
     try:
         for encoding in ['utf-8', 'big5', 'gbk']:
             try:
@@ -35,6 +35,52 @@ def load_data(file):
         return None, f"讀取檔案失敗: {str(e)}"
 
 
+def load_data_fast(file_path):
+    """優先讀 Parquet，fallback 讀 CSV。回傳 (df, error)。
+    
+    file_path: Path 物件（可以是 .csv 或 .parquet）
+    如果傳入 .csv，會自動檢查同名 .parquet 是否存在。
+    """
+    file_path = Path(file_path)
+    
+    # 決定 parquet 路徑
+    if file_path.suffix == '.parquet':
+        pq_path = file_path
+        csv_path = file_path.with_suffix('.csv')
+    else:
+        csv_path = file_path
+        pq_path = file_path.with_suffix('.parquet')
+    
+    # 優先讀 parquet
+    if pq_path.exists():
+        try:
+            df = pd.read_parquet(pq_path)
+            return df, None
+        except Exception:
+            pass  # fallback to CSV
+    
+    # Fallback: 讀 CSV
+    if csv_path.exists():
+        return load_data(csv_path)
+    
+    return None, f"找不到檔案: {file_path}"
+
+
+def save_with_parquet(df, csv_path):
+    """同時存 CSV + Parquet。CSV 保留給下載，Parquet 給 dashboard 快速讀取。"""
+    csv_path = Path(csv_path)
+    pq_path = csv_path.with_suffix('.parquet')
+    
+    # 存 CSV（保留給使用者下載）
+    df.to_csv(csv_path, index=False, encoding='utf-8')
+    
+    # 存 Parquet（dashboard 讀取用）
+    try:
+        df.to_parquet(pq_path, index=False)
+    except Exception:
+        pass  # Parquet 存失敗不影響主流程，下次讀 CSV 就好
+
+
 def normalize_customer_id(series: pd.Series) -> pd.Series:
     """把 merchant_customer_id 清洗成純字串（去掉 .0 / 空白）"""
     return (
@@ -44,21 +90,31 @@ def normalize_customer_id(series: pd.Series) -> pd.Series:
 
 
 def list_uploaded_files(file_type=None):
-    """列出已存的 CSV 檔（按修改時間排序，最新的在前）"""
+    """列出已存的資料檔（按修改時間排序，最新的在前）
+    
+    優先回傳 .parquet，如果沒有才回傳 .csv。
+    同一個檔名只回傳一個（parquet 優先）。
+    """
+    def _collect_files(folder_path):
+        """收集資料夾中的檔案，parquet 優先、去重"""
+        csv_files = {f.stem: f for f in folder_path.glob("*.csv")}
+        pq_files = {f.stem: f for f in folder_path.glob("*.parquet")}
+        # parquet 覆蓋 csv（同名時優先用 parquet）
+        merged = {**csv_files, **pq_files}
+        return list(merged.values())
+    
     if file_type and file_type in FILE_TYPES:
         folder_path = UPLOAD_DIR / FILE_TYPES[file_type]
-        files = list(folder_path.glob("*.csv"))
+        files = _collect_files(folder_path)
     else:
-        # 如果沒指定類型，列出所有子資料夾中的檔案
         all_files = []
         for folder_name in FILE_TYPES.values():
             folder_path = UPLOAD_DIR / folder_name
-            all_files.extend(folder_path.glob("*.csv"))
+            all_files.extend(_collect_files(folder_path))
         # 也包含根目錄的檔案（舊檔案相容性）
         all_files.extend(UPLOAD_DIR.glob("*.csv"))
         files = all_files
 
-    # 按照修改時間排序，最新的在前
     files.sort(key=lambda f: f.stat().st_mtime, reverse=True)
     return files
 
@@ -190,7 +246,7 @@ def scan_sellers_from_files():
         if not folder_path.exists():
             continue
         
-        for f in folder_path.glob("*.csv"):
+        for f in list(folder_path.glob("*.csv")) + list(folder_path.glob("*.parquet")):
             seller = _extract_seller_name(f.name, file_type)
             if seller:
                 sellers.add(seller)
@@ -213,7 +269,7 @@ def get_seller_list():
             folder_path = UPLOAD_DIR / folder_name
             if not folder_path.exists():
                 continue
-            for f in folder_path.glob("*.csv"):
+            for f in list(folder_path.glob("*.csv")) + list(folder_path.glob("*.parquet")):
                 if seller_key in f.stem:
                     mtime = f.stat().st_mtime
                     if mtime > latest:
@@ -234,7 +290,7 @@ def get_seller_list():
 
 
 def find_seller_files(seller_key, file_type=None):
-    """找出某個賣家在各資料夾中最新的檔案
+    """找出某個賣家在各資料夾中最新的檔案（parquet 優先）
     
     回傳 dict: {file_type: Path} 只包含找到的類型
     """
@@ -246,11 +302,16 @@ def find_seller_files(seller_key, file_type=None):
         if not folder_path.exists():
             continue
         
-        # 找出檔名包含 seller_key 的檔案
-        matching = [f for f in folder_path.glob("*.csv") if seller_key in f.stem]
+        # 找出檔名包含 seller_key 的檔案（csv + parquet）
+        matching_csv = [f for f in folder_path.glob("*.csv") if seller_key in f.stem]
+        matching_pq = [f for f in folder_path.glob("*.parquet") if seller_key in f.stem]
+        
+        # 合併，parquet 優先（同名去重）
+        by_stem = {f.stem: f for f in matching_csv}
+        by_stem.update({f.stem: f for f in matching_pq})
+        matching = list(by_stem.values())
         
         if matching:
-            # 按修改時間排序，取最新的
             matching.sort(key=lambda f: f.stat().st_mtime, reverse=True)
             result[ft] = matching[0]
     

@@ -1,5 +1,5 @@
 import streamlit as st
-from utils import list_uploaded_files, load_data, normalize_customer_id
+from utils import list_uploaded_files, load_data_fast, normalize_customer_id
 import plotly.graph_objects as go
 
 
@@ -67,20 +67,20 @@ def show_customer_id_filter_tab(df, selected_file):
     """顯示 Customer ID 篩選 tab 的內容"""
     # 檢查是否有 merchant_customer_id 欄位
     if 'merchant_customer_id' not in df.columns:
-        st.error("❌ 數據中沒有找到 'merchant_customer_id' 欄位")
+        st.error("數據中沒有找到 'merchant_customer_id' 欄位")
         return
 
     # -------------------------
-    # 🔹 Customer ID 篩選
+    # Customer ID 篩選
     # -------------------------
     customer_input = st.text_input(
-        "🔍 輸入 Merchant Customer ID (逗號分隔)",
+        ":material/search: 輸入 Merchant Customer ID (逗號分隔)",
         placeholder="例如: 12345,67890,11111",
         help="可輸入多個Customer ID，用逗號分隔"
     )
 
     # -------------------------
-    # 🔹 Marketplace ID 篩選
+    # Marketplace ID 篩選
     # -------------------------
     marketplace_filter = None
     if 'marketplace_id' in df.columns:
@@ -88,13 +88,13 @@ def show_customer_id_filter_tab(df, selected_file):
         available_marketplaces_int = [int(m) for m in available_marketplaces]
         if available_marketplaces:
             marketplace_filter = st.multiselect(
-                "🌍 選擇 Marketplace ID",
+                "選擇 Marketplace ID",
                 options=available_marketplaces_int,
                 help="可選擇多個 Marketplace"
             )
 
     # -------------------------
-    # 🔹 Calendar Year 篩選
+    # Calendar Year 篩選
     # -------------------------
     year_filter = None
     if 'calendar_year' in df.columns:
@@ -102,13 +102,13 @@ def show_customer_id_filter_tab(df, selected_file):
         available_years_int = [int(y) for y in available_years]
         if available_years:
             year_filter = st.multiselect(
-                "📅 選擇 Calendar Year",
+                "選擇 Calendar Year",
                 options=available_years_int,
                 help="可選擇多個年份"
             )
 
     # -------------------------
-    # 🔹 Calendar Month 篩選
+    # Calendar Month 篩選
     # -------------------------
     month_filter = None
     if 'calendar_month' in df.columns:
@@ -116,13 +116,13 @@ def show_customer_id_filter_tab(df, selected_file):
         available_months_int = [int(m) for m in available_months]
         if available_months:
             month_filter = st.multiselect(
-                "📆 選擇 Calendar Month",
+                "選擇 Calendar Month",
                 options=available_months_int,
                 help="可選擇多個月份"
             )
 
     # -------------------------
-    # 🔹 根據 Customer ID、Marketplace ID、Year 和 Month 過濾數據
+    # 根據 Customer ID、Marketplace ID、Year 和 Month 過濾數據
     # -------------------------
     filtered_df = df.copy()
     chart_df = df.copy()  # 用於圖表的數據，不受年月篩選影響
@@ -169,7 +169,7 @@ def show_customer_id_filter_tab(df, selected_file):
     current_month = now.month
 
     # -------------------------
-    # 🔹 選擇要顯示的欄位功能
+    # 選擇要顯示的欄位功能
     # -------------------------
     if not filtered_df.empty:
         # 按最重要的數值欄位排序（如果存在）
@@ -221,12 +221,12 @@ def show_customer_id_filter_tab(df, selected_file):
             st.warning("請至少選擇一個欄位來顯示數據")
 
         # -------------------------
-        # 🔹 圖表區域 - 只在有篩選條件時顯示
+        # 圖表區域 - 只在有篩選條件時顯示
         # -------------------------
         if not has_filter_input:
-            st.info("💡 請輸入 Merchant Customer ID 或選擇 Marketplace ID 來查看圖表")
+            st.info("請輸入 Merchant Customer ID 或選擇 Marketplace ID 來查看圖表", icon=":material/info:")
         elif 'calendar_year' in chart_df.columns and 'calendar_month' in chart_df.columns:
-            st.subheader("📈 趨勢圖表")
+            st.subheader("趨勢圖表")
 
             # 找出可繪圖的數值欄位
             numeric_columns = chart_df.select_dtypes(include=['int64', 'float64']).columns.tolist()
@@ -360,11 +360,11 @@ def show_customer_id_filter_tab(df, selected_file):
             else:
                 st.warning("沒有可用於繪圖的數值欄位")
     else:
-        st.warning("⚠️ 沒有符合條件的數據")
+        st.warning("沒有符合條件的數據")
 
 
-st.set_page_config(page_title="Metrics Tracker", page_icon="📈", layout="wide")
-st.title("📈 Metrics Tracker")
+st.set_page_config(page_title="Metrics Tracker", page_icon=":material/trending_up:", layout="wide")
+st.title(":material/trending_up: Metrics Tracker")
 
 # 初始化 session_state 來保存數據
 if 'performance_review_loaded_data' not in st.session_state:
@@ -385,7 +385,7 @@ if files:
         if st.session_state.performance_review_filename != selected_name:
             # 檔案改變了，需要重新讀取
             selected_file = file_options[selected_name]
-            df, error = load_data(selected_file)
+            df, error = load_data_fast(selected_file)
             if error:
                 st.error(error)
             elif df is not None and not df.empty:
@@ -394,7 +394,7 @@ if files:
                 st.session_state.performance_review_filename = selected_name
                 show_customer_id_filter_tab(df, {"name": selected_name, "size": selected_file.stat().st_size})
             else:
-                st.warning("⚠️ 無法讀取檔案或檔案為空")
+                st.warning("無法讀取檔案或檔案為空")
         else:
             # 使用快取的數據
             if st.session_state.performance_review_loaded_data is not None:
