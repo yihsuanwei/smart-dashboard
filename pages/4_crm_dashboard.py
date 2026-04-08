@@ -469,6 +469,49 @@ with tab_perf:
                                         yaxis_rangemode="tozero" if g_gms == 0 else "normal")
                 st.plotly_chart(fig_trend, use_container_width=True)
 
+            # ── Metric Cards (WBR) ──
+            # YoY sparkline cards for key metrics, inserted after Weekly GMS Trend
+            if not curr.empty and not ly.empty:
+                _WBR_METRICS = [
+                    ("gms", "GMS", "$"), ("new_fba_ba", "New FBA BA", "#"),
+                    ("fba_ba", "FBA BA", "#"), ("fba_awas", "FBA AWAS", "#"),
+                    ("promo_count", "Promo Count", "#"), ("promo_ops", "Promo OPS", "$"),
+                    ("ads_spend", "Ads Spend", "$"), ("ads_ops", "Ads OPS", "$"),
+                ]
+                # Build YoY trending sparkline: each week's YoY%
+                _wbr_spark = {}
+                for col, _, _ in _WBR_METRICS:
+                    vals = []
+                    for w in sorted(all_weeks[:8]):
+                        w_curr = src[(src["year"] == max_y) & (src["week"] == w)][col].sum()
+                        w_ly = perf_full_df[(perf_full_df["mcid"].isin(_group_mcids)) & (perf_full_df["year"] == max_y - 1) & (perf_full_df["week"] == w)][col].sum()
+                        vals.append(((w_curr / w_ly - 1) * 100) if w_ly else 0)
+                    _wbr_spark[col] = vals
+
+                st.caption("Key metrics YoY")
+                # All 8 metrics in one row
+                with st.container(horizontal=True):
+                    for col, label, fmt in _WBR_METRICS:
+                        c_val = curr[col].sum() if col in curr.columns else 0
+                        l_val = ly[col].sum() if col in ly.columns else 0
+                        yoy_v = pct_change(c_val, l_val)
+                        if fmt == "$":
+                            disp = f"${c_val/1e6:.2f}M" if abs(c_val) >= 1e6 else f"${c_val/1e3:.1f}K" if abs(c_val) >= 1e3 else f"${c_val:.0f}"
+                            _help = f"W{cw} {money(c_val)} vs LY {money(l_val)}"
+                        else:
+                            disp = f"{c_val:,.0f}"
+                            _help = f"W{cw} {c_val:,.0f} vs LY {l_val:,.0f}"
+                        _delta_str = f"{yoy_v:+.1f}% YoY" if yoy_v is not None else None
+                        st.metric(
+                            label, disp,
+                            delta=_delta_str,
+                            delta_color="normal",
+                            help=_help,
+                            border=True,
+                            chart_data=_wbr_spark.get(col, []),
+                            chart_type="line",
+                        )
+
             # Seller detail table
             if not curr.empty:
                 detail = curr[["gms", "ads_ops", "promo_ops", "ba", "fba_ba"]].copy()
@@ -561,6 +604,88 @@ with tab_perf:
                 fig_trend.update_layout(height=300, margin=dict(t=35, b=10), yaxis_title="", xaxis_title="",
                                         yaxis_rangemode="tozero" if g_gms == 0 else "normal")
                 st.plotly_chart(fig_trend, use_container_width=True)
+
+            # ── Metric Cards (MBR) ──
+            # YoY sparkline cards for 12 key metrics, using pkey_raw_monthly for full coverage
+            if not curr.empty:
+                _MBR_METRICS = [
+                    ("mtd_ord_gms", "GMS", "$"), ("mtd_new_fba_ba_90d", "New FBA BA", "#"),
+                    ("mtd_fba_ba", "FBA BA", "#"), ("mtd_fba_awas", "FBA AWAS", "#"),
+                    ("mtd_deal_count", "Deal Count", "#"), ("mtd_deal_ops", "Deal OPS", "$"),
+                    ("mtd_promotion_count", "Promo Count", "#"), ("mtd_promotion_ops", "Promo OPS", "$"),
+                    ("mtd_coupon_count", "Coupon Count", "#"), ("mtd_coupon_ops", "Coupon OPS", "$"),
+                    ("mtd_sa_revenue_usd", "Ads Spend", "$"), ("mtd_sa_attributed_ops_usd", "Ads OPS", "$"),
+                ]
+                _mbr_card_cols = ["mcid", "year", "month", "marketplace_id"] + [c for c, _, _ in _MBR_METRICS]
+
+                # Need: current month + all available months for trending + LY months
+                _mbr_months_for_cards = set()
+                for m in all_months:
+                    _mbr_months_for_cards.add((max_y, m))
+                    _mbr_months_for_cards.add((max_y - 1, m))
+
+                # Query pkey_raw_monthly directly (no nested cached function to avoid cache issues)
+                _mbr_raw = pd.DataFrame()
+                _card_conn = get_db_connection()
+                if _card_conn is not None:
+                    _card_mcids = list(_group_mcids)
+                    _card_ph = ",".join(["?"] * len(_card_mcids))
+                    _card_month_conds = " OR ".join([f"(year={y} AND month={m})" for y, m in _mbr_months_for_cards])
+                    _card_sql = f"SELECT {','.join(_mbr_card_cols)} FROM pkey_raw_monthly WHERE ({_card_month_conds}) AND mcid IN ({_card_ph})"
+                    _mbr_raw = pd.read_sql(_card_sql, _card_conn, params=_card_mcids)
+                    _card_conn.close()
+
+                if not _mbr_raw.empty:
+                    # Aggregate by (year, month) for the group
+                    _mbr_agg = _mbr_raw.groupby(["year", "month"]).sum(numeric_only=True)
+
+                    # Current month and LY values
+                    _mbr_curr = _mbr_agg.loc[(max_y, cm)] if (max_y, cm) in _mbr_agg.index else pd.Series(dtype=float)
+                    _mbr_ly = _mbr_agg.loc[(max_y - 1, cm)] if (max_y - 1, cm) in _mbr_agg.index else pd.Series(dtype=float)
+
+                    # Build YoY sparkline: each month's YoY%
+                    _mbr_spark = {}
+                    for col, _, _ in _MBR_METRICS:
+                        vals = []
+                        for m in sorted(all_months):
+                            c_v = _mbr_agg.loc[(max_y, m)][col] if (max_y, m) in _mbr_agg.index and col in _mbr_agg.columns else 0
+                            l_v = _mbr_agg.loc[(max_y - 1, m)][col] if (max_y - 1, m) in _mbr_agg.index and col in _mbr_agg.columns else 0
+                            vals.append(((c_v / l_v - 1) * 100) if l_v else 0)
+                        _mbr_spark[col] = vals
+
+                    st.caption("Key metrics YoY")
+                    # Row 1: 6 metrics (Selection funnel)
+                    with st.container(horizontal=True):
+                        for col, label, fmt in _MBR_METRICS[:6]:
+                            c_val = _mbr_curr[col] if col in _mbr_curr.index else 0
+                            l_val = _mbr_ly[col] if col in _mbr_ly.index else 0
+                            yoy_v = pct_change(c_val, l_val)
+                            if fmt == "$":
+                                disp = f"${c_val/1e6:.2f}M" if abs(c_val) >= 1e6 else f"${c_val/1e3:.1f}K" if abs(c_val) >= 1e3 else f"${c_val:.0f}"
+                                _h = f"{mon_label} {money(c_val)} vs LY {money(l_val)}"
+                            else:
+                                disp = f"{c_val:,.0f}"
+                                _h = f"{mon_label} {c_val:,.0f} vs LY {l_val:,.0f}"
+                            _delta_str = f"{yoy_v:+.1f}% YoY" if yoy_v is not None else None
+                            st.metric(label, disp, delta=_delta_str,
+                                      delta_color="normal", help=_h, border=True,
+                                      chart_data=_mbr_spark.get(col, []), chart_type="line")
+                    # Row 2: 6 metrics (Promo + Ads)
+                    with st.container(horizontal=True):
+                        for col, label, fmt in _MBR_METRICS[6:]:
+                            c_val = _mbr_curr[col] if col in _mbr_curr.index else 0
+                            l_val = _mbr_ly[col] if col in _mbr_ly.index else 0
+                            yoy_v = pct_change(c_val, l_val)
+                            if fmt == "$":
+                                disp = f"${c_val/1e6:.2f}M" if abs(c_val) >= 1e6 else f"${c_val/1e3:.1f}K" if abs(c_val) >= 1e3 else f"${c_val:.0f}"
+                                _h = f"{mon_label} {money(c_val)} vs LY {money(l_val)}"
+                            else:
+                                disp = f"{c_val:,.0f}"
+                                _h = f"{mon_label} {c_val:,.0f} vs LY {l_val:,.0f}"
+                            _delta_str = f"{yoy_v:+.1f}% YoY" if yoy_v is not None else None
+                            st.metric(label, disp, delta=_delta_str,
+                                      delta_color="normal", help=_h, border=True,
+                                      chart_data=_mbr_spark.get(col, []), chart_type="line")
 
             # Seller detail
             if not curr.empty:
