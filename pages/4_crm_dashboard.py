@@ -172,6 +172,14 @@ sellers_df["is_q1_spark"] = sellers_df["tags_list"].apply(lambda t: "Q1_Spark" i
 
 st.write("")
 
+# ── 年資 cohort mapping ──
+COHORT_DISPLAY = {
+    "Existing - 2nd Year": "Y2",
+    "Existing - 3rd Year": "Y3",
+    "Existing - Aging": "Y4+",
+}
+COHORT_REVERSE = {v: k for k, v in COHORT_DISPLAY.items()}
+
 # ── 篩選器 ──
 # Tier 短名稱 mapping（顯示用）
 TIER_DISPLAY = {
@@ -185,7 +193,7 @@ all_tiers = sorted(sellers_df["tier"].unique().tolist())
 all_tiers_display = [TIER_DISPLAY.get(t, t) for t in all_tiers]
 default_display = [TIER_DISPLAY.get(t, t) for t in MM_TIERS_DEFAULT if t in all_tiers]
 
-filter_col1, filter_col2 = st.columns([3, 2])
+filter_col1, filter_col2, filter_col3 = st.columns([4, 2, 2])
 
 with filter_col1:
     selected_tiers_display = st.pills(
@@ -194,6 +202,17 @@ with filter_col1:
     )
     selected_tiers = [TIER_REVERSE.get(d, d) for d in (selected_tiers_display or [])]
 with filter_col2:
+    all_cohorts_display = sorted(
+        [COHORT_DISPLAY[c] for c in sellers_df["launch_year_cohort"].dropna().unique()
+         if c in COHORT_DISPLAY],
+        key=lambda x: ["Y2", "Y3", "Y4+"].index(x) if x in ["Y2", "Y3", "Y4+"] else 99,
+    )
+    selected_cohorts_display = st.pills(
+        "年資", all_cohorts_display,
+        selection_mode="multi", key="crm_cohort_filter",
+    )
+    selected_cohorts = [COHORT_REVERSE.get(d, d) for d in (selected_cohorts_display or [])]
+with filter_col3:
     owners = ["All"] + sorted(sellers_df["owner"].dropna().unique().tolist())
     selected_owner = st.selectbox("Owner", owners, key="crm_owner_filter")
 
@@ -201,6 +220,8 @@ with filter_col2:
 filtered = sellers_df.copy()
 if selected_tiers:
     filtered = filtered[filtered["tier"].isin(selected_tiers)]
+if selected_cohorts:
+    filtered = filtered[filtered["launch_year_cohort"].isin(selected_cohorts)]
 if selected_owner != "All":
     filtered = filtered[filtered["owner"] == selected_owner]
 
@@ -520,14 +541,54 @@ with tab_perf:
                 detail["name"] = detail["mcid"].map(lambda m: name_map.get(m, {}).get("name", m))
                 detail["tier"] = detail["mcid"].map(lambda m: name_map.get(m, {}).get("tier", ""))
                 detail["owner"] = detail["mcid"].map(lambda m: name_map.get(m, {}).get("owner", ""))
+
+                # GMS WoW / YoY / CTC（所有群體）
+                _total_prev_gms = prev["gms"].sum() if not prev.empty else 0
+                _total_ly_gms = ly["gms"].sum() if not ly.empty else 0
+                _wow_list, _yoy_list, _ctc_wow_list, _ctc_yoy_list = [], [], [], []
+                for _, r in detail.iterrows():
+                    _mid = r["mcid"]
+                    _c = curr.loc[_mid, "gms"] if _mid in curr.index else 0
+                    _p = prev.loc[_mid, "gms"] if not prev.empty and _mid in prev.index else 0
+                    _l = ly.loc[_mid, "gms"] if not ly.empty and _mid in ly.index else 0
+                    _wow_list.append(pct_change(_c, _p))
+                    _yoy_list.append(pct_change(_c, _l))
+                    _ctc_wow_list.append((_c - _p) / _total_prev_gms * 100 if _total_prev_gms != 0 else None)
+                    _ctc_yoy_list.append((_c - _l) / _total_ly_gms * 100 if _total_ly_gms != 0 else None)
+                detail["GMS WoW"] = _wow_list
+                detail["GMS YoY"] = _yoy_list
+                detail["CTC WoW"] = _ctc_wow_list
+                detail["CTC YoY"] = _ctc_yoy_list
+
                 detail = detail.sort_values("gms", ascending=False)
-                detail = detail[["name", "tier", "owner", "gms", "ads_ops", "promo_ops", "ba", "fba_ba"]]
-                detail.columns = ["名稱", "Tier", "Owner", "GMS", "Ads OPS", "Promo OPS", "BA", "FBA BA"]
-                st.dataframe(detail, use_container_width=True, hide_index=True, height=400,
+                detail = detail[["name", "tier", "owner", "gms", "GMS WoW", "GMS YoY", "CTC WoW", "CTC YoY", "ads_ops", "promo_ops", "ba", "fba_ba"]]
+                detail.columns = ["名稱", "Tier", "Owner", "GMS", "GMS WoW", "GMS YoY", "CTC WoW", "CTC YoY", "Ads OPS", "Promo OPS", "BA", "FBA BA"]
+
+                def _color_pct_wbr(val):
+                    if val is None or pd.isna(val):
+                        return "color: gray"
+                    return "color: #2e7d32" if val >= 0 else "color: #c62828"
+
+                _n = group_seller_count
+                _ctc_wow_help = f"CTC WoW = (該賣家本週 GMS − 上週 GMS) ÷ ({_n}家上週總 GMS) × 100%。例：上週總 GMS = $300萬，A 賣家本週多了 $6萬 → CTC = +6/300 = +2.0%。全部加總 = 整體 WoW%。"
+                _ctc_yoy_help = f"CTC YoY = (該賣家本週 GMS − 去年同週 GMS) ÷ ({_n}家去年同週總 GMS) × 100%。例：去年同週總 GMS = $310萬，A 賣家掉了 $20萬 → CTC = −20/310 = −6.5%。全部加總 = 整體 YoY%。"
+                _styled = (
+                    detail.style
+                    .format({
+                        "GMS": "${:,.0f}", "Ads OPS": "${:,.0f}", "Promo OPS": "${:,.0f}",
+                        "GMS WoW": lambda v: f"{v:+.1f}%" if pd.notna(v) else "—",
+                        "GMS YoY": lambda v: f"{v:+.1f}%" if pd.notna(v) else "—",
+                        "CTC WoW": lambda v: f"{v:+.1f}%" if pd.notna(v) else "—",
+                        "CTC YoY": lambda v: f"{v:+.1f}%" if pd.notna(v) else "—",
+                    })
+                    .map(_color_pct_wbr, subset=["GMS WoW", "GMS YoY", "CTC WoW", "CTC YoY"])
+                )
+                st.dataframe(_styled, use_container_width=True, hide_index=True, height=400,
                              column_config={
-                                 "GMS": st.column_config.NumberColumn(format="$%.0f"),
-                                 "Ads OPS": st.column_config.NumberColumn(format="$%.0f"),
-                                 "Promo OPS": st.column_config.NumberColumn(format="$%.0f"),
+                                 "CTC WoW": st.column_config.NumberColumn("CTC WoW", help=_ctc_wow_help),
+                                 "CTC YoY": st.column_config.NumberColumn("CTC YoY", help=_ctc_yoy_help),
+                                 "GMS WoW": st.column_config.NumberColumn("GMS WoW", help="該賣家 GMS 的 Week-over-Week 變化率"),
+                                 "GMS YoY": st.column_config.NumberColumn("GMS YoY", help="該賣家 GMS 的 Year-over-Year 變化率"),
                              })
 
     elif view_choice == "MBR (Monthly)" and not perf_monthly_df.empty:
@@ -695,17 +756,55 @@ with tab_perf:
                 detail["name"] = detail["mcid"].map(lambda m: name_map.get(m, {}).get("name", m))
                 detail["tier"] = detail["mcid"].map(lambda m: name_map.get(m, {}).get("tier", ""))
                 detail["owner"] = detail["mcid"].map(lambda m: name_map.get(m, {}).get("owner", ""))
-                detail = detail.sort_values("gms", ascending=False)
-                detail = detail[["name", "tier", "owner", "gms", "ads_ops", "promo_ops", "ba", "fba_ba"]]
-                detail.columns = ["名稱", "Tier", "Owner", "GMS", "Ads OPS", "Promo OPS", "BA", "FBA BA"]
-                st.dataframe(detail, use_container_width=True, hide_index=True, height=400,
-                             column_config={
-                                 "GMS": st.column_config.NumberColumn(format="$%.0f"),
-                                 "Ads OPS": st.column_config.NumberColumn(format="$%.0f"),
-                                 "Promo OPS": st.column_config.NumberColumn(format="$%.0f"),
-                             })
 
-            # MBR 全量底表（lazy load，展開才載入）
+                # GMS MoM / YoY / CTC（所有群體）
+                _total_prev_gms = prev["gms"].sum() if not prev.empty else 0
+                _total_ly_gms = ly["gms"].sum() if not ly.empty else 0
+                _mom_list, _yoy_list, _ctc_mom_list, _ctc_yoy_list = [], [], [], []
+                for _, r in detail.iterrows():
+                    _mid = r["mcid"]
+                    _c = curr.loc[_mid, "gms"] if _mid in curr.index else 0
+                    _p = prev.loc[_mid, "gms"] if not prev.empty and _mid in prev.index else 0
+                    _l = ly.loc[_mid, "gms"] if not ly.empty and _mid in ly.index else 0
+                    _mom_list.append(pct_change(_c, _p))
+                    _yoy_list.append(pct_change(_c, _l))
+                    _ctc_mom_list.append((_c - _p) / _total_prev_gms * 100 if _total_prev_gms != 0 else None)
+                    _ctc_yoy_list.append((_c - _l) / _total_ly_gms * 100 if _total_ly_gms != 0 else None)
+                detail["GMS MoM"] = _mom_list
+                detail["GMS YoY"] = _yoy_list
+                detail["CTC MoM"] = _ctc_mom_list
+                detail["CTC YoY"] = _ctc_yoy_list
+
+                detail = detail.sort_values("gms", ascending=False)
+                detail = detail[["name", "tier", "owner", "gms", "GMS MoM", "GMS YoY", "CTC MoM", "CTC YoY", "ads_ops", "promo_ops", "ba", "fba_ba"]]
+                detail.columns = ["名稱", "Tier", "Owner", "GMS", "GMS MoM", "GMS YoY", "CTC MoM", "CTC YoY", "Ads OPS", "Promo OPS", "BA", "FBA BA"]
+
+                def _color_pct_mbr(val):
+                    if val is None or pd.isna(val):
+                        return "color: gray"
+                    return "color: #2e7d32" if val >= 0 else "color: #c62828"
+
+                _n = group_seller_count
+                _ctc_mom_help = f"CTC MoM = (該賣家本月 GMS − 上月 GMS) ÷ ({_n}家上月總 GMS) × 100%。例：上月總 GMS = $280萬，A 賣家本月多了 $5萬 → CTC = +5/280 = +1.8%。全部加總 = 整體 MoM%。"
+                _ctc_yoy_help_m = f"CTC YoY = (該賣家本月 GMS − 去年同月 GMS) ÷ ({_n}家去年同月總 GMS) × 100%。例：去年同月總 GMS = $310萬，A 賣家掉了 $20萬 → CTC = −20/310 = −6.5%。全部加總 = 整體 YoY%。"
+                _styled = (
+                    detail.style
+                    .format({
+                        "GMS": "${:,.0f}", "Ads OPS": "${:,.0f}", "Promo OPS": "${:,.0f}",
+                        "GMS MoM": lambda v: f"{v:+.1f}%" if pd.notna(v) else "—",
+                        "GMS YoY": lambda v: f"{v:+.1f}%" if pd.notna(v) else "—",
+                        "CTC MoM": lambda v: f"{v:+.1f}%" if pd.notna(v) else "—",
+                        "CTC YoY": lambda v: f"{v:+.1f}%" if pd.notna(v) else "—",
+                    })
+                    .map(_color_pct_mbr, subset=["GMS MoM", "GMS YoY", "CTC MoM", "CTC YoY"])
+                )
+                st.dataframe(_styled, use_container_width=True, hide_index=True, height=400,
+                             column_config={
+                                 "CTC MoM": st.column_config.NumberColumn("CTC MoM", help=_ctc_mom_help),
+                                 "CTC YoY": st.column_config.NumberColumn("CTC YoY", help=_ctc_yoy_help_m),
+                                 "GMS MoM": st.column_config.NumberColumn("GMS MoM", help="該賣家 GMS 的 Month-over-Month 變化率"),
+                                 "GMS YoY": st.column_config.NumberColumn("GMS YoY", help="該賣家 GMS 的 Year-over-Year 變化率"),
+                             })
             with st.expander(f":material/table_chart: 全量底表（{mon_label} {max_y} · 144 欄）", expanded=False):
 
                 @st.cache_data(ttl=120)
@@ -810,7 +909,7 @@ with tab_spark:
         spark_display = spark_sellers[["mcid", "name", "owner", "tier"]].copy()
         spark_display.columns = ["MCID", "名稱", "Owner", "Tier"]
 
-        # 加上績效
+        # 加上績效（週度 GMS）
         if not perf_df.empty and _lw:
             latest_perf = perf_df[(perf_df["year"] == _max_year) & (perf_df["week"] == _lw)]
             perf_agg = latest_perf.groupby("mcid").agg(
@@ -823,6 +922,44 @@ with tab_spark:
             for c in ["GMS", "Ads OPS", "Promo OPS", "BA"]:
                 spark_display[c] = 0
 
+        # ── GMS MoM / YoY / CTC（月度）──
+        spark_display["GMS MoM"] = None
+        spark_display["GMS YoY"] = None
+        spark_display["CTC MoM"] = None
+        spark_display["CTC YoY"] = None
+        if not month_list_df.empty:
+            _ml = list(zip(month_list_df["year"].astype(int), month_list_df["month"].astype(int)))
+            if _ml:
+                _cm_y, _cm_m = _ml[0]  # 最新月
+                # 上月
+                _pm_y, _pm_m = (_cm_y, _cm_m - 1) if _cm_m > 1 else (_cm_y - 1, 12)
+                # 去年同月
+                _ly_y, _ly_m = _cm_y - 1, _cm_m
+                _spark_mcids = set(spark_display["MCID"])
+                _month_pairs = tuple({(_cm_y, _cm_m), (_pm_y, _pm_m), (_ly_y, _ly_m)})
+                _mperf = load_performance_months(_month_pairs)
+                if not _mperf.empty:
+                    _mperf = _mperf[_mperf["mcid"].isin(_spark_mcids)]
+                    _mg = _mperf.groupby(["mcid", "year", "month"])["gms"].sum().reset_index()
+                    _cm_gms = _mg[(_mg["year"] == _cm_y) & (_mg["month"] == _cm_m)].set_index("mcid")["gms"]
+                    _pm_gms = _mg[(_mg["year"] == _pm_y) & (_mg["month"] == _pm_m)].set_index("mcid")["gms"]
+                    _ly_gms = _mg[(_mg["year"] == _ly_y) & (_mg["month"] == _ly_m)].set_index("mcid")["gms"]
+                    # SPARK 34 家前期總額（CTC 分母）
+                    _total_pm = _pm_gms.sum()
+                    _total_ly = _ly_gms.sum()
+                    for idx, row in spark_display.iterrows():
+                        _mid = row["MCID"]
+                        _c = _cm_gms.get(_mid, 0)
+                        _p = _pm_gms.get(_mid, 0)
+                        _l = _ly_gms.get(_mid, 0)
+                        spark_display.at[idx, "GMS MoM"] = pct_change(_c, _p)
+                        spark_display.at[idx, "GMS YoY"] = pct_change(_c, _l)
+                        # CTC = (個別變化) ÷ (前期總額) × 100
+                        if _total_pm != 0:
+                            spark_display.at[idx, "CTC MoM"] = (_c - _p) / _total_pm * 100
+                        if _total_ly != 0:
+                            spark_display.at[idx, "CTC YoY"] = (_c - _l) / _total_ly * 100
+
         # 加上最新 note
         notes_df = load_notes()
         if not notes_df.empty:
@@ -832,16 +969,36 @@ with tab_spark:
             spark_display = spark_display.merge(latest_notes, on="MCID", how="left")
 
         spark_display = spark_display.sort_values("GMS", ascending=False)
-        st.dataframe(spark_display, use_container_width=True, hide_index=True, height=500,
+
+        # 格式化 + 條件顏色（正綠負紅）
+        def _color_pct(val):
+            if val is None or pd.isna(val):
+                return "color: gray"
+            return "color: #2e7d32" if val >= 0 else "color: #c62828"
+
+        _styled = (
+            spark_display.style
+            .format({
+                "GMS": "${:,.0f}",
+                "Ads OPS": "${:,.0f}",
+                "Promo OPS": "${:,.0f}",
+                "BA": "{:,.0f}",
+                "GMS MoM": lambda v: f"{v:+.1f}%" if pd.notna(v) else "—",
+                "GMS YoY": lambda v: f"{v:+.1f}%" if pd.notna(v) else "—",
+                "CTC MoM": lambda v: f"{v:+.1f}%" if pd.notna(v) else "—",
+                "CTC YoY": lambda v: f"{v:+.1f}%" if pd.notna(v) else "—",
+            })
+            .map(_color_pct, subset=["GMS MoM", "GMS YoY", "CTC MoM", "CTC YoY"])
+        )
+        _ctc_mom_help_s = "CTC MoM = (該賣家本月 GMS − 上月 GMS) ÷ (34家上月總 GMS) × 100%。例：上月 34 家總 GMS = $280萬，A 賣家本月多了 $5萬 → CTC MoM = +5/280 = +1.8%。全部加總 = 整體 MoM%。"
+        _ctc_yoy_help_s = "CTC YoY = (該賣家本月 GMS − 去年同月 GMS) ÷ (34家去年同月總 GMS) × 100%。例：去年同月 34 家總 GMS = $310萬，Phrozen 掉了 $20萬 → CTC YoY = −20/310 = −6.5%。全部加總 = 整體 YoY%。"
+        st.dataframe(_styled, use_container_width=True, hide_index=True, height=500,
                      column_config={
-                         "GMS": st.column_config.NumberColumn(format="$%.0f"),
-                         "Ads OPS": st.column_config.NumberColumn(format="$%.0f"),
-                         "Promo OPS": st.column_config.NumberColumn(format="$%.0f"),
-                         "BA": st.column_config.NumberColumn(format="%.0f"),
+                         "CTC MoM": st.column_config.NumberColumn("CTC MoM", help=_ctc_mom_help_s),
+                         "CTC YoY": st.column_config.NumberColumn("CTC YoY", help=_ctc_yoy_help_s),
+                         "GMS MoM": st.column_config.NumberColumn("GMS MoM", help="該賣家 GMS 的 Month-over-Month 變化率"),
+                         "GMS YoY": st.column_config.NumberColumn("GMS YoY", help="該賣家 GMS 的 Year-over-Year 變化率"),
                      })
-
-
-# ── Tab 4: 底表（全量 PKEY 資料）──
 with tab_base:
 
     base_view = st.segmented_control(
