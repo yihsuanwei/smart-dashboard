@@ -1,6 +1,6 @@
 # Smart Dashboard
 
-> 最後更新：2026-04-08
+> 最後更新：2026-04-09
 
 Ivory 的 Streamlit Dashboard，直接讀 ivory-cli 的 `crm.db`，不需要上傳 CSV。
 
@@ -44,7 +44,11 @@ streamlit run Home.py
 - 數據來源切換：WBR (Weekly) / MBR (Monthly)
 - KPI 卡片：GMS、YoY、YTD GMS、Ads OPS、Promo OPS、BA
 - 趨勢圖：最近 8 週或可用月份的 GMS 折線圖
+- Key metrics YoY sparkline 卡片（WBR 8 項 / MBR 12 項）
 - Seller detail table：該群體的賣家績效明細
+  - 所有群體皆含：GMS WoW/MoM、GMS YoY、CTC WoW/MoM、CTC YoY（正綠負紅）
+  - CTC 公式：(該賣家 GMS 變化) ÷ (群體前期總 GMS) × 100%，全部加總 = 整體變化率
+  - 欄位表頭有 hover tooltip 說明公式與範例
 - MBR 全量底表（expander）：展開才載入 `pkey_raw_monthly` 144 欄
 
 #### Tab 2: 賣家清單
@@ -52,9 +56,9 @@ streamlit run Home.py
 - 顯示：MCID、名稱、Owner、Tier、Q1/Q2 AM、GMS、Latest Note
 
 #### Tab 3: SPARK 管理
-- Q1 SPARK 客戶總覽
+- Q1 SPARK 客戶總覽（固定 34 家，不受全域篩選影響）
 - by Owner / by Tier 分佈
-- 賣家明細 + 績效 + Latest Note
+- 賣家明細 + 績效 + GMS MoM / YoY / CTC MoM / CTC YoY（正綠負紅）+ Latest Note
 
 #### Tab 4: 底表
 - MBR 全量 (Monthly)：讀 `pkey_raw_monthly`，144 欄全量

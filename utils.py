@@ -1,6 +1,7 @@
 import pandas as pd
 import json
 import os
+import sqlite3
 from pathlib import Path
 
 
@@ -8,6 +9,38 @@ UPLOAD_DIR = Path("uploaded_data")
 UPLOAD_DIR.mkdir(exist_ok=True)
 
 SELLER_REGISTRY_PATH = UPLOAD_DIR / "seller_registry.json"
+
+# ivory-cli 的 crm.db 路徑（smart-dashboard 直接讀同一個 db）
+CRM_DB_PATH = Path(__file__).resolve().parent.parent / "ivory-cli" / "data" / "crm.db"
+
+
+def get_seller_meta(mcid: str) -> dict:
+    """從 crm.db 撈指定 MCID 的 meta 資料（LINE 綁定、配合度、owner 等）。
+
+    回傳 dict，撈不到就回傳空 dict（讓呼叫端用 .get() 安全存取）。
+    """
+    if not mcid or not CRM_DB_PATH.exists():
+        return {}
+    try:
+        conn = sqlite3.connect(str(CRM_DB_PATH))
+        row = conn.execute(
+            "SELECT mcid, name, owner, cooperation_level, line_bindind "
+            "FROM sellers WHERE mcid = ?",
+            (str(mcid),),
+        ).fetchone()
+        conn.close()
+        if row is None:
+            return {}
+        return {
+            "mcid": row[0],
+            "name": row[1],
+            "owner": row[2],
+            "cooperation_level": row[3] or "",
+            "line_bindind": int(row[4]) if row[4] is not None else 0,
+        }
+    except sqlite3.OperationalError:
+        return {}
+
 
 # 文件類型對應的子資料夾（移除 Total Year Change，改由 Sales Traffic Report 動態計算）
 FILE_TYPES = {

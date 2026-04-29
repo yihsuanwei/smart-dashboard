@@ -34,6 +34,33 @@ def load_sellers():
         return pd.DataFrame()
     df = pd.read_sql("SELECT * FROM sellers", conn)
     conn.close()
+    # 預先解析 tags（避免每次 rerun 都跑 lambda）
+    df["tags_list"] = df["tags"].apply(parse_tags)
+    df["tier"] = df["tags_list"].apply(lambda t: get_tag_value(t, "tier"))
+    df["spark_phase"] = df["tags_list"].apply(lambda t: get_tag_value(t, "spark-phase"))
+
+    # SPARK 參加期別：支援 {year}Q{N}_Spark (新) 和 Q{N}_Spark (舊,預設 2026)
+    # 多期用「、」串接；沒參加過 → 空字串
+    # 「is_q1_spark」保留給既有 tab 使用（這裡指目前 Q1 有參加 spark 的賣家）
+    import re
+    _spark_re_new = re.compile(r"^(\d{4})Q(\d)_Spark$")
+    _spark_re_old = re.compile(r"^Q(\d)_Spark$")  # 向後相容
+
+    def _extract_periods(tags):
+        periods = set()
+        for t in tags:
+            m = _spark_re_new.match(t)
+            if m:
+                periods.add(f"{m.group(1)}-Q{m.group(2)}")
+                continue
+            m = _spark_re_old.match(t)
+            if m:
+                periods.add(f"2026-Q{m.group(1)}")  # fallback: 舊格式假設 2026
+        return "、".join(sorted(periods))
+
+    df["spark_periods"] = df["tags_list"].apply(_extract_periods)
+    # is_q1_spark：參加過 2026 Q1 spark 的人（用 spark_periods 反推）
+    df["is_q1_spark"] = df["spark_periods"].str.contains("2026-Q1", na=False)
     return df
 
 
@@ -109,6 +136,37 @@ def load_notes():
     return df
 
 
+@st.cache_data(ttl=120)
+def load_latest_notes():
+    """只載入每個 mcid 最新一筆 note（賣家清單 / SPARK 用）"""
+    conn = get_db_connection()
+    if conn is None:
+        return pd.DataFrame()
+    df = pd.read_sql(
+        """SELECT mcid, content, created_at
+           FROM notes
+           WHERE id IN (SELECT MAX(id) FROM notes GROUP BY mcid)
+           ORDER BY created_at DESC""",
+        conn,
+    )
+    conn.close()
+    return df
+
+
+def load_notes_for_seller(mcid: str):
+    """載入指定賣家的全部 notes（不 cache，確保即時）"""
+    conn = get_db_connection()
+    if conn is None:
+        return pd.DataFrame()
+    df = pd.read_sql(
+        "SELECT id, mcid, type, content, author, created_at "
+        "FROM notes WHERE mcid = ? ORDER BY created_at DESC",
+        conn, params=[mcid],
+    )
+    conn.close()
+    return df
+
+
 def parse_tags(tags_json):
     try:
         return json.loads(tags_json) if isinstance(tags_json, str) else []
@@ -133,6 +191,13 @@ def pct_change(curr, prev):
     if prev is None or prev == 0 or pd.isna(prev):
         return None
     return (curr - prev) / prev * 100
+
+
+def _color_pct(val):
+    """百分比欄位條件顏色：正綠負紅，None 灰色"""
+    if val is None or pd.isna(val):
+        return "color: gray"
+    return "color: #2e7d32" if val >= 0 else "color: #c62828"
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -164,11 +229,7 @@ _kpi_week_pairs = tuple(_all_weeks_desc[:2])  # 只要最新 2 週算 WoW
 # 載入 KPI 用的績效資料
 perf_df = load_performance_weeks(_kpi_week_pairs)
 
-# 解析 tags
-sellers_df["tags_list"] = sellers_df["tags"].apply(parse_tags)
-sellers_df["tier"] = sellers_df["tags_list"].apply(lambda t: get_tag_value(t, "tier"))
-sellers_df["spark_phase"] = sellers_df["tags_list"].apply(lambda t: get_tag_value(t, "spark-phase"))
-sellers_df["is_q1_spark"] = sellers_df["tags_list"].apply(lambda t: "Q1_Spark" in t)
+# tags 已在 load_sellers() 內預先解析（cached），不需要每次 rerun 重跑
 
 st.write("")
 
@@ -338,9 +399,9 @@ if not filtered.empty:
 # Tab 切換
 # ═══════════════════════════════════════════════════════════════
 
-tab_perf, tab_sellers, tab_spark, tab_base = st.tabs([
+tab_perf, tab_interaction, tab_spark, tab_base = st.tabs([
     ":material/trending_up: Performance",
-    ":material/list: 賣家清單",
+    ":material/history: 互動史",
     ":material/star: SPARK 管理",
     ":material/table_chart: 底表",
 ])
@@ -360,22 +421,23 @@ with tab_perf:
             default="WBR (Weekly)", key="perf_view",
         )
 
-    # 強制至少選一個（segmented_control 允許取消選取）
-    if not group_choice:
-        group_choice = "Ignite"
+    # view_choice 強制至少一個；group_choice 可以取消 → 全部（吃上面的全域篩選）
     if not view_choice:
         view_choice = "WBR (Weekly)"
 
     # 決定群體 MCID
     # SPARK 固定用 Q1 全部 34 家（不受 Owner/Tier 篩選影響）
-    # Ignite / MM-MASS 尊重全域 Owner 篩選
+    # Ignite / MM-MASS / 未選 尊重全域 Owner / Tier 篩選
     _base = filtered  # 從全域篩選結果開始
     if group_choice == "Ignite":
         _group_mcids = set(_base[_base["tier"].isin({"ignite-y4+", "ignite-y2y3"})]["mcid"])
     elif group_choice == "MM-MASS":
         _group_mcids = set(_base[_base["tier"].isin({"ignite-y4+", "ignite-y2y3", "mass"})]["mcid"])
-    else:  # SPARK — 固定用 Q1 BOB 全部名單
+    elif group_choice == "SPARK":
         _group_mcids = set(sellers_df[sellers_df["is_q1_spark"]]["mcid"])
+    else:
+        # 三個都不選 → 吃全域篩選（tier/cohort/owner 都尊重）
+        _group_mcids = set(_base["mcid"])
 
     group_seller_count = len(_group_mcids)
 
@@ -386,9 +448,11 @@ with tab_perf:
     }
     if group_choice == "SPARK":
         _group_label_tpl = f"SPARK | {{}} | {group_seller_count} sellers (Q1 BOB)"
-    else:
+    elif group_choice in _GROUP_TIER_DESC:
         _tier_desc = _GROUP_TIER_DESC.get(group_choice, "")
         _group_label_tpl = f"{group_choice} ({_tier_desc}) | {{}} | {group_seller_count} sellers"
+    else:
+        _group_label_tpl = f"全部（依上方篩選）| {{}} | {group_seller_count} sellers"
 
     # Lazy load: MBR 資料只在切到 MBR 時才載入
     if view_choice == "MBR (Monthly)":
@@ -535,60 +599,73 @@ with tab_perf:
 
             # Seller detail table
             if not curr.empty:
+                # 載入 latest notes（WBR + MBR 共用）
+                _latest_notes_df = load_latest_notes()
+                _notes_map = {}
+                if not _latest_notes_df.empty:
+                    for _, r in _latest_notes_df.iterrows():
+                        _notes_map[r["mcid"]] = (r["content"], r["created_at"])
+
                 detail = curr[["gms", "ads_ops", "promo_ops", "ba", "fba_ba"]].copy()
                 detail = detail.reset_index()
-                name_map = sellers_df.set_index("mcid")[["name", "tier", "owner"]].to_dict("index")
+                _seller_cols = ["name", "tier", "owner", "q1_am", "q2_am",
+                                "cooperation_level", "line_bindind", "spark_periods"]
+                name_map = sellers_df.set_index("mcid")[_seller_cols].to_dict("index")
                 detail["name"] = detail["mcid"].map(lambda m: name_map.get(m, {}).get("name", m))
                 detail["tier"] = detail["mcid"].map(lambda m: name_map.get(m, {}).get("tier", ""))
                 detail["owner"] = detail["mcid"].map(lambda m: name_map.get(m, {}).get("owner", ""))
+                detail["q1_am"] = detail["mcid"].map(lambda m: name_map.get(m, {}).get("q1_am", "") or "")
+                detail["q2_am"] = detail["mcid"].map(lambda m: name_map.get(m, {}).get("q2_am", "") or "")
+                detail["coop"] = detail["mcid"].map(lambda m: name_map.get(m, {}).get("cooperation_level", "") or "—")
+                detail["line"] = detail["mcid"].map(lambda m: "是" if name_map.get(m, {}).get("line_bindind") else "否")
+                detail["spark"] = detail["mcid"].map(lambda m: name_map.get(m, {}).get("spark_periods", "") or "")
+                detail["latest_note"] = detail["mcid"].map(lambda m: _notes_map.get(m, ("", ""))[0])
+                detail["note_date"] = detail["mcid"].map(lambda m: _notes_map.get(m, ("", ""))[1])
 
-                # GMS WoW / YoY / CTC（所有群體）
+                # GMS WoW / YoY / CTC — 向量化計算（不用 iterrows）
                 _total_prev_gms = prev["gms"].sum() if not prev.empty else 0
                 _total_ly_gms = ly["gms"].sum() if not ly.empty else 0
-                _wow_list, _yoy_list, _ctc_wow_list, _ctc_yoy_list = [], [], [], []
-                for _, r in detail.iterrows():
-                    _mid = r["mcid"]
-                    _c = curr.loc[_mid, "gms"] if _mid in curr.index else 0
-                    _p = prev.loc[_mid, "gms"] if not prev.empty and _mid in prev.index else 0
-                    _l = ly.loc[_mid, "gms"] if not ly.empty and _mid in ly.index else 0
-                    _wow_list.append(pct_change(_c, _p))
-                    _yoy_list.append(pct_change(_c, _l))
-                    _ctc_wow_list.append((_c - _p) / _total_prev_gms * 100 if _total_prev_gms != 0 else None)
-                    _ctc_yoy_list.append((_c - _l) / _total_ly_gms * 100 if _total_ly_gms != 0 else None)
-                detail["GMS WoW"] = _wow_list
-                detail["GMS YoY"] = _yoy_list
-                detail["CTC WoW"] = _ctc_wow_list
-                detail["CTC YoY"] = _ctc_yoy_list
+
+                _prev_gms_s = prev["gms"] if not prev.empty else pd.Series(dtype=float)
+                _ly_gms_s = ly["gms"] if not ly.empty else pd.Series(dtype=float)
+
+                detail["_c"] = detail["mcid"].map(curr["gms"]).fillna(0)
+                detail["_p"] = detail["mcid"].map(_prev_gms_s).fillna(0)
+                detail["_l"] = detail["mcid"].map(_ly_gms_s).fillna(0)
+
+                detail["GMS WoW"] = detail.apply(lambda r: pct_change(r["_c"], r["_p"]), axis=1)
+                detail["GMS YoY"] = detail.apply(lambda r: pct_change(r["_c"], r["_l"]), axis=1)
+                detail["CTC WoW"] = (detail["_c"] - detail["_p"]) / _total_prev_gms * 100 if _total_prev_gms else None
+                detail["CTC YoY"] = (detail["_c"] - detail["_l"]) / _total_ly_gms * 100 if _total_ly_gms else None
+                detail.drop(columns=["_c", "_p", "_l"], inplace=True)
 
                 detail = detail.sort_values("gms", ascending=False)
-                detail = detail[["name", "tier", "owner", "gms", "GMS WoW", "GMS YoY", "CTC WoW", "CTC YoY", "ads_ops", "promo_ops", "ba", "fba_ba"]]
-                detail.columns = ["名稱", "Tier", "Owner", "GMS", "GMS WoW", "GMS YoY", "CTC WoW", "CTC YoY", "Ads OPS", "Promo OPS", "BA", "FBA BA"]
-
-                def _color_pct_wbr(val):
-                    if val is None or pd.isna(val):
-                        return "color: gray"
-                    return "color: #2e7d32" if val >= 0 else "color: #c62828"
+                detail = detail[["mcid", "name", "tier", "owner", "q1_am", "q2_am",
+                                 "coop", "line", "spark",
+                                 "gms", "GMS WoW", "GMS YoY", "CTC WoW", "CTC YoY",
+                                 "ads_ops", "promo_ops", "ba", "fba_ba",
+                                 "latest_note", "note_date"]]
+                detail.columns = ["MCID", "名稱", "Tier", "Owner", "Q1 AM", "Q2 AM",
+                                  "配合度", "LINE", "SPARK",
+                                  "GMS", "GMS WoW", "GMS YoY", "CTC WoW", "CTC YoY",
+                                  "Ads OPS", "Promo OPS", "BA", "FBA BA",
+                                  "Latest Note", "Note Date"]
 
                 _n = group_seller_count
                 _ctc_wow_help = f"CTC WoW = (該賣家本週 GMS − 上週 GMS) ÷ ({_n}家上週總 GMS) × 100%。例：上週總 GMS = $300萬，A 賣家本週多了 $6萬 → CTC = +6/300 = +2.0%。全部加總 = 整體 WoW%。"
                 _ctc_yoy_help = f"CTC YoY = (該賣家本週 GMS − 去年同週 GMS) ÷ ({_n}家去年同週總 GMS) × 100%。例：去年同週總 GMS = $310萬，A 賣家掉了 $20萬 → CTC = −20/310 = −6.5%。全部加總 = 整體 YoY%。"
-                _styled = (
-                    detail.style
-                    .format({
-                        "GMS": "${:,.0f}", "Ads OPS": "${:,.0f}", "Promo OPS": "${:,.0f}",
-                        "GMS WoW": lambda v: f"{v:+.1f}%" if pd.notna(v) else "—",
-                        "GMS YoY": lambda v: f"{v:+.1f}%" if pd.notna(v) else "—",
-                        "CTC WoW": lambda v: f"{v:+.1f}%" if pd.notna(v) else "—",
-                        "CTC YoY": lambda v: f"{v:+.1f}%" if pd.notna(v) else "—",
-                    })
-                    .map(_color_pct_wbr, subset=["GMS WoW", "GMS YoY", "CTC WoW", "CTC YoY"])
-                )
-                st.dataframe(_styled, use_container_width=True, hide_index=True, height=400,
+                st.dataframe(detail, use_container_width=True, hide_index=True, height=400,
                              column_config={
-                                 "CTC WoW": st.column_config.NumberColumn("CTC WoW", help=_ctc_wow_help),
-                                 "CTC YoY": st.column_config.NumberColumn("CTC YoY", help=_ctc_yoy_help),
+                                 "GMS": st.column_config.NumberColumn("GMS", format="$%.0f"),
+                                 "Ads OPS": st.column_config.NumberColumn("Ads OPS", format="$%.0f"),
+                                 "Promo OPS": st.column_config.NumberColumn("Promo OPS", format="$%.0f"),
                                  "GMS WoW": st.column_config.NumberColumn("GMS WoW", help="該賣家 GMS 的 Week-over-Week 變化率"),
                                  "GMS YoY": st.column_config.NumberColumn("GMS YoY", help="該賣家 GMS 的 Year-over-Year 變化率"),
+                                 "CTC WoW": st.column_config.NumberColumn("CTC WoW", help=_ctc_wow_help),
+                                 "CTC YoY": st.column_config.NumberColumn("CTC YoY", help=_ctc_yoy_help),
+                                 "LINE": st.column_config.TextColumn("LINE", help="LINE 綁定狀態（是/否）"),
+                                 "配合度": st.column_config.TextColumn("配合度"),
+                                 "Latest Note": st.column_config.TextColumn("Latest Note", width="large"),
                              })
 
     elif view_choice == "MBR (Monthly)" and not perf_monthly_df.empty:
@@ -685,16 +762,25 @@ with tab_perf:
                     _mbr_months_for_cards.add((max_y, m))
                     _mbr_months_for_cards.add((max_y - 1, m))
 
-                # Query pkey_raw_monthly directly (no nested cached function to avoid cache issues)
-                _mbr_raw = pd.DataFrame()
-                _card_conn = get_db_connection()
-                if _card_conn is not None:
-                    _card_mcids = list(_group_mcids)
-                    _card_ph = ",".join(["?"] * len(_card_mcids))
-                    _card_month_conds = " OR ".join([f"(year={y} AND month={m})" for y, m in _mbr_months_for_cards])
-                    _card_sql = f"SELECT {','.join(_mbr_card_cols)} FROM pkey_raw_monthly WHERE ({_card_month_conds}) AND mcid IN ({_card_ph})"
-                    _mbr_raw = pd.read_sql(_card_sql, _card_conn, params=_card_mcids)
-                    _card_conn.close()
+                @st.cache_data(ttl=120)
+                def _load_mbr_card_data(_mcids_tuple, _month_pairs_tuple, _cols_tuple):
+                    """Cached: 載入 MBR metric cards 需要的 pkey_raw_monthly 資料"""
+                    conn = get_db_connection()
+                    if conn is None:
+                        return pd.DataFrame()
+                    mcid_list = list(_mcids_tuple)
+                    ph = ",".join(["?"] * len(mcid_list))
+                    month_conds = " OR ".join([f"(year={y} AND month={m})" for y, m in _month_pairs_tuple])
+                    sql = f"SELECT {','.join(_cols_tuple)} FROM pkey_raw_monthly WHERE ({month_conds}) AND mcid IN ({ph})"
+                    df = pd.read_sql(sql, conn, params=mcid_list)
+                    conn.close()
+                    return df
+
+                _mbr_raw = _load_mbr_card_data(
+                    tuple(sorted(_group_mcids)),
+                    tuple(sorted(_mbr_months_for_cards)),
+                    tuple(_mbr_card_cols),
+                )
 
                 if not _mbr_raw.empty:
                     # Aggregate by (year, month) for the group
@@ -750,60 +836,73 @@ with tab_perf:
 
             # Seller detail
             if not curr.empty:
+                # 載入 latest notes
+                _latest_notes_df = load_latest_notes()
+                _notes_map = {}
+                if not _latest_notes_df.empty:
+                    for _, r in _latest_notes_df.iterrows():
+                        _notes_map[r["mcid"]] = (r["content"], r["created_at"])
+
                 detail = curr[["gms", "ads_ops", "promo_ops", "ba", "fba_ba"]].copy()
                 detail = detail.reset_index()
-                name_map = sellers_df.set_index("mcid")[["name", "tier", "owner"]].to_dict("index")
+                _seller_cols = ["name", "tier", "owner", "q1_am", "q2_am",
+                                "cooperation_level", "line_bindind", "spark_periods"]
+                name_map = sellers_df.set_index("mcid")[_seller_cols].to_dict("index")
                 detail["name"] = detail["mcid"].map(lambda m: name_map.get(m, {}).get("name", m))
                 detail["tier"] = detail["mcid"].map(lambda m: name_map.get(m, {}).get("tier", ""))
                 detail["owner"] = detail["mcid"].map(lambda m: name_map.get(m, {}).get("owner", ""))
+                detail["q1_am"] = detail["mcid"].map(lambda m: name_map.get(m, {}).get("q1_am", "") or "")
+                detail["q2_am"] = detail["mcid"].map(lambda m: name_map.get(m, {}).get("q2_am", "") or "")
+                detail["coop"] = detail["mcid"].map(lambda m: name_map.get(m, {}).get("cooperation_level", "") or "—")
+                detail["line"] = detail["mcid"].map(lambda m: "是" if name_map.get(m, {}).get("line_bindind") else "否")
+                detail["spark"] = detail["mcid"].map(lambda m: name_map.get(m, {}).get("spark_periods", "") or "")
+                detail["latest_note"] = detail["mcid"].map(lambda m: _notes_map.get(m, ("", ""))[0])
+                detail["note_date"] = detail["mcid"].map(lambda m: _notes_map.get(m, ("", ""))[1])
 
-                # GMS MoM / YoY / CTC（所有群體）
+                # GMS MoM / YoY / CTC — 向量化計算
                 _total_prev_gms = prev["gms"].sum() if not prev.empty else 0
                 _total_ly_gms = ly["gms"].sum() if not ly.empty else 0
-                _mom_list, _yoy_list, _ctc_mom_list, _ctc_yoy_list = [], [], [], []
-                for _, r in detail.iterrows():
-                    _mid = r["mcid"]
-                    _c = curr.loc[_mid, "gms"] if _mid in curr.index else 0
-                    _p = prev.loc[_mid, "gms"] if not prev.empty and _mid in prev.index else 0
-                    _l = ly.loc[_mid, "gms"] if not ly.empty and _mid in ly.index else 0
-                    _mom_list.append(pct_change(_c, _p))
-                    _yoy_list.append(pct_change(_c, _l))
-                    _ctc_mom_list.append((_c - _p) / _total_prev_gms * 100 if _total_prev_gms != 0 else None)
-                    _ctc_yoy_list.append((_c - _l) / _total_ly_gms * 100 if _total_ly_gms != 0 else None)
-                detail["GMS MoM"] = _mom_list
-                detail["GMS YoY"] = _yoy_list
-                detail["CTC MoM"] = _ctc_mom_list
-                detail["CTC YoY"] = _ctc_yoy_list
+
+                _prev_gms_s = prev["gms"] if not prev.empty else pd.Series(dtype=float)
+                _ly_gms_s = ly["gms"] if not ly.empty else pd.Series(dtype=float)
+
+                detail["_c"] = detail["mcid"].map(curr["gms"]).fillna(0)
+                detail["_p"] = detail["mcid"].map(_prev_gms_s).fillna(0)
+                detail["_l"] = detail["mcid"].map(_ly_gms_s).fillna(0)
+
+                detail["GMS MoM"] = detail.apply(lambda r: pct_change(r["_c"], r["_p"]), axis=1)
+                detail["GMS YoY"] = detail.apply(lambda r: pct_change(r["_c"], r["_l"]), axis=1)
+                detail["CTC MoM"] = (detail["_c"] - detail["_p"]) / _total_prev_gms * 100 if _total_prev_gms else None
+                detail["CTC YoY"] = (detail["_c"] - detail["_l"]) / _total_ly_gms * 100 if _total_ly_gms else None
+                detail.drop(columns=["_c", "_p", "_l"], inplace=True)
 
                 detail = detail.sort_values("gms", ascending=False)
-                detail = detail[["name", "tier", "owner", "gms", "GMS MoM", "GMS YoY", "CTC MoM", "CTC YoY", "ads_ops", "promo_ops", "ba", "fba_ba"]]
-                detail.columns = ["名稱", "Tier", "Owner", "GMS", "GMS MoM", "GMS YoY", "CTC MoM", "CTC YoY", "Ads OPS", "Promo OPS", "BA", "FBA BA"]
-
-                def _color_pct_mbr(val):
-                    if val is None or pd.isna(val):
-                        return "color: gray"
-                    return "color: #2e7d32" if val >= 0 else "color: #c62828"
+                detail = detail[["mcid", "name", "tier", "owner", "q1_am", "q2_am",
+                                 "coop", "line", "spark",
+                                 "gms", "GMS MoM", "GMS YoY", "CTC MoM", "CTC YoY",
+                                 "ads_ops", "promo_ops", "ba", "fba_ba",
+                                 "latest_note", "note_date"]]
+                detail.columns = ["MCID", "名稱", "Tier", "Owner", "Q1 AM", "Q2 AM",
+                                  "配合度", "LINE", "SPARK",
+                                  "GMS", "GMS MoM", "GMS YoY", "CTC MoM", "CTC YoY",
+                                  "Ads OPS", "Promo OPS", "BA", "FBA BA",
+                                  "Latest Note", "Note Date"]
 
                 _n = group_seller_count
                 _ctc_mom_help = f"CTC MoM = (該賣家本月 GMS − 上月 GMS) ÷ ({_n}家上月總 GMS) × 100%。例：上月總 GMS = $280萬，A 賣家本月多了 $5萬 → CTC = +5/280 = +1.8%。全部加總 = 整體 MoM%。"
                 _ctc_yoy_help_m = f"CTC YoY = (該賣家本月 GMS − 去年同月 GMS) ÷ ({_n}家去年同月總 GMS) × 100%。例：去年同月總 GMS = $310萬，A 賣家掉了 $20萬 → CTC = −20/310 = −6.5%。全部加總 = 整體 YoY%。"
-                _styled = (
-                    detail.style
-                    .format({
-                        "GMS": "${:,.0f}", "Ads OPS": "${:,.0f}", "Promo OPS": "${:,.0f}",
-                        "GMS MoM": lambda v: f"{v:+.1f}%" if pd.notna(v) else "—",
-                        "GMS YoY": lambda v: f"{v:+.1f}%" if pd.notna(v) else "—",
-                        "CTC MoM": lambda v: f"{v:+.1f}%" if pd.notna(v) else "—",
-                        "CTC YoY": lambda v: f"{v:+.1f}%" if pd.notna(v) else "—",
-                    })
-                    .map(_color_pct_mbr, subset=["GMS MoM", "GMS YoY", "CTC MoM", "CTC YoY"])
-                )
-                st.dataframe(_styled, use_container_width=True, hide_index=True, height=400,
+                st.dataframe(detail, use_container_width=True, hide_index=True, height=400,
                              column_config={
-                                 "CTC MoM": st.column_config.NumberColumn("CTC MoM", help=_ctc_mom_help),
-                                 "CTC YoY": st.column_config.NumberColumn("CTC YoY", help=_ctc_yoy_help_m),
+                                 "GMS": st.column_config.NumberColumn("GMS", format="$%.0f"),
+                                 "Ads OPS": st.column_config.NumberColumn("Ads OPS", format="$%.0f"),
+                                 "Promo OPS": st.column_config.NumberColumn("Promo OPS", format="$%.0f"),
                                  "GMS MoM": st.column_config.NumberColumn("GMS MoM", help="該賣家 GMS 的 Month-over-Month 變化率"),
                                  "GMS YoY": st.column_config.NumberColumn("GMS YoY", help="該賣家 GMS 的 Year-over-Year 變化率"),
+                                 "CTC MoM": st.column_config.NumberColumn("CTC MoM", help=_ctc_mom_help),
+                                 "CTC YoY": st.column_config.NumberColumn("CTC YoY", help=_ctc_yoy_help_m),
+                                 "LINE": st.column_config.TextColumn("LINE", help="LINE 綁定狀態（是/否）"),
+                                 "配合度": st.column_config.TextColumn("配合度"),
+                                 "Latest Note": st.column_config.TextColumn("Latest Note", width="large"),
                              })
             with st.expander(f":material/table_chart: 全量底表（{mon_label} {max_y} · 144 欄）", expanded=False):
 
@@ -839,45 +938,36 @@ with tab_perf:
         st.info("沒有可用的績效數據。請先執行 sync-pkey 或 sync-mbr。")
 
 
-# ── Tab 2: 賣家清單（含 Latest Note）──
-with tab_sellers:
-    # Lazy load notes
-    notes_df = load_notes()
-
-    # 從全域篩選結果開始，只提供搜尋框做進一步篩選
-    sl_search = st.text_input(":material/search: 搜尋（名稱 / MCID）", key="sl_search", placeholder="名稱 / MCID")
-
+# ── Tab 2: 互動史（選賣家看 notes 歷史）──
+with tab_interaction:
+    # 從全域篩選結果開始
     sl_df = filtered.copy()
-    if sl_search:
-        kw = sl_search.lower()
-        sl_df = sl_df[sl_df["name"].str.lower().str.contains(kw, na=False) | sl_df["mcid"].str.contains(kw, na=False)]
 
     if sl_df.empty:
-        st.info("查無符合條件的賣家")
+        st.info("目前沒有符合篩選條件的賣家")
     else:
-        display_df = sl_df[["mcid", "name", "owner", "tier", "q1_am", "q2_am"]].copy()
-        display_df.columns = ["MCID", "名稱", "Owner", "Tier", "Q1 AM", "Q2 AM"]
-
-        # 加上最新績效
-        if not perf_df.empty and _lw:
-            latest_perf = perf_df[(perf_df["year"] == _max_year) & (perf_df["week"] == _lw)]
-            gms_agg = latest_perf.groupby("mcid")["gms"].sum().to_dict()
-            display_df["GMS"] = display_df["MCID"].map(gms_agg).fillna(0)
-        else:
-            display_df["GMS"] = 0
-
-        # 加上最新 note
-        if not notes_df.empty:
-            latest_notes = notes_df.groupby("mcid").first().reset_index()[["mcid", "content", "created_at"]]
-            latest_notes.columns = ["MCID", "Latest Note", "Note Date"]
-            latest_notes["Latest Note"] = latest_notes["Latest Note"].str[:80]
-            display_df = display_df.merge(latest_notes, on="MCID", how="left")
-
-        display_df = display_df.sort_values("GMS", ascending=False)
-        st.dataframe(display_df, use_container_width=True, hide_index=True, height=500,
-                     column_config={
-                         "GMS": st.column_config.NumberColumn("GMS", format="$%.0f"),
-                     })
+        seller_options = sl_df.sort_values("name").apply(
+            lambda r: f"{r['name']}  ({r['mcid']})", axis=1
+        ).tolist()
+        selected = st.selectbox(
+            ":material/history: 查看賣家 Notes 歷史",
+            options=["（選擇賣家）"] + seller_options,
+            key="notes_history_select",
+        )
+        if selected != "（選擇賣家）":
+            sel_mcid = selected.split("(")[-1].rstrip(")").strip()
+            all_notes = load_notes_for_seller(sel_mcid)
+            if all_notes.empty:
+                st.caption("這個賣家還沒有任何 note")
+            else:
+                st.caption(f"共 {len(all_notes)} 筆紀錄")
+                for _, n in all_notes.iterrows():
+                    with st.container(border=True):
+                        c1, c2, c3 = st.columns([2, 1, 1])
+                        c1.markdown(f"**{n['created_at']}**")
+                        c2.caption(n['type'])
+                        c3.caption(f"by {n['author']}")
+                        st.text(n['content'])
 
 # ── Tab 3: SPARK 管理 ──
 with tab_spark:
@@ -960,44 +1050,28 @@ with tab_spark:
                         if _total_ly != 0:
                             spark_display.at[idx, "CTC YoY"] = (_c - _l) / _total_ly * 100
 
-        # 加上最新 note
-        notes_df = load_notes()
-        if not notes_df.empty:
-            latest_notes = notes_df.groupby("mcid").first().reset_index()[["mcid", "content", "created_at"]]
+        # 加上最新 note（不截斷）
+        _latest_notes = load_latest_notes()
+        if not _latest_notes.empty:
+            latest_notes = _latest_notes[["mcid", "content", "created_at"]].copy()
             latest_notes.columns = ["MCID", "Latest Note", "Note Date"]
-            latest_notes["Latest Note"] = latest_notes["Latest Note"].str[:60]
             spark_display = spark_display.merge(latest_notes, on="MCID", how="left")
 
         spark_display = spark_display.sort_values("GMS", ascending=False)
 
-        # 格式化 + 條件顏色（正綠負紅）
-        def _color_pct(val):
-            if val is None or pd.isna(val):
-                return "color: gray"
-            return "color: #2e7d32" if val >= 0 else "color: #c62828"
-
-        _styled = (
-            spark_display.style
-            .format({
-                "GMS": "${:,.0f}",
-                "Ads OPS": "${:,.0f}",
-                "Promo OPS": "${:,.0f}",
-                "BA": "{:,.0f}",
-                "GMS MoM": lambda v: f"{v:+.1f}%" if pd.notna(v) else "—",
-                "GMS YoY": lambda v: f"{v:+.1f}%" if pd.notna(v) else "—",
-                "CTC MoM": lambda v: f"{v:+.1f}%" if pd.notna(v) else "—",
-                "CTC YoY": lambda v: f"{v:+.1f}%" if pd.notna(v) else "—",
-            })
-            .map(_color_pct, subset=["GMS MoM", "GMS YoY", "CTC MoM", "CTC YoY"])
-        )
         _ctc_mom_help_s = "CTC MoM = (該賣家本月 GMS − 上月 GMS) ÷ (34家上月總 GMS) × 100%。例：上月 34 家總 GMS = $280萬，A 賣家本月多了 $5萬 → CTC MoM = +5/280 = +1.8%。全部加總 = 整體 MoM%。"
         _ctc_yoy_help_s = "CTC YoY = (該賣家本月 GMS − 去年同月 GMS) ÷ (34家去年同月總 GMS) × 100%。例：去年同月 34 家總 GMS = $310萬，Phrozen 掉了 $20萬 → CTC YoY = −20/310 = −6.5%。全部加總 = 整體 YoY%。"
-        st.dataframe(_styled, use_container_width=True, hide_index=True, height=500,
+        _pct_cols_s = ["GMS MoM", "GMS YoY", "CTC MoM", "CTC YoY"]
+        st.dataframe(spark_display, use_container_width=True, hide_index=True, height=500,
                      column_config={
-                         "CTC MoM": st.column_config.NumberColumn("CTC MoM", help=_ctc_mom_help_s),
-                         "CTC YoY": st.column_config.NumberColumn("CTC YoY", help=_ctc_yoy_help_s),
+                         "GMS": st.column_config.NumberColumn("GMS", format="$%.0f"),
+                         "Ads OPS": st.column_config.NumberColumn("Ads OPS", format="$%.0f"),
+                         "Promo OPS": st.column_config.NumberColumn("Promo OPS", format="$%.0f"),
                          "GMS MoM": st.column_config.NumberColumn("GMS MoM", help="該賣家 GMS 的 Month-over-Month 變化率"),
                          "GMS YoY": st.column_config.NumberColumn("GMS YoY", help="該賣家 GMS 的 Year-over-Year 變化率"),
+                         "CTC MoM": st.column_config.NumberColumn("CTC MoM", help=_ctc_mom_help_s),
+                         "CTC YoY": st.column_config.NumberColumn("CTC YoY", help=_ctc_yoy_help_s),
+                         "Latest Note": st.column_config.TextColumn("Latest Note", width="large"),
                      })
 with tab_base:
 
@@ -1025,55 +1099,78 @@ with tab_base:
 
         @st.cache_data(ttl=300)
         def _load_raw_filter_options(year: int, month: int):
-            """只載入篩選器選項（極快，不載入資料本身）"""
+            """一次查完所有文字欄位的 distinct 值（單條 SQL，極快）"""
             conn = get_db_connection()
             if conn is None:
-                return [], [], []
-            tiers = [r[0] for r in conn.execute(
-                "SELECT DISTINCT sub_tier FROM pkey_raw_monthly WHERE year=? AND month=? AND sub_tier != '' ORDER BY sub_tier",
-                (year, month)).fetchall()]
-            ams = [r[0] for r in conn.execute(
-                "SELECT DISTINCT am FROM pkey_raw_monthly WHERE year=? AND month=? AND am != '' ORDER BY am",
-                (year, month)).fetchall()]
-            pgs = [r[0] for r in conn.execute(
-                "SELECT DISTINCT sp_primary_pg FROM pkey_raw_monthly WHERE year=? AND month=? AND sp_primary_pg != '' ORDER BY sp_primary_pg",
-                (year, month)).fetchall()]
+                return {}
+            _text_cols = [
+                "sub_tier", "am", "sp_primary_pg", "sp_primary_gl",
+                "main_tier", "status", "launch_year_cohort",
+                "marketplace", "region", "launch_program", "launch_channel",
+                "launch_year_group", "launch_year",
+                "is_brand_reg", "is_brand_rep",
+                "is_carryover_nsr", "seller_age",
+            ]
+            # 一條 UNION ALL 一次撈完，比 17 次 SELECT DISTINCT 快 10 倍以上
+            unions = " UNION ALL ".join(
+                f"SELECT '{col}' as col, {col} as val FROM pkey_raw_monthly "
+                f"WHERE year=? AND month=? AND {col} != '' GROUP BY {col}"
+                for col in _text_cols
+            )
+            params = []
+            for _ in _text_cols:
+                params.extend([year, month])
+            rows = conn.execute(unions, params).fetchall()
             conn.close()
-            return tiers, ams, pgs
+
+            options: dict[str, list[str]] = {}
+            for col_name, val in rows:
+                options.setdefault(col_name, []).append(val)
+            # 排序
+            for k in options:
+                options[k].sort()
+            return options
 
         @st.cache_data(ttl=120)
-        def _query_raw_monthly(year: int, month: int, tier: str, am: str,
-                               pg: str, search: str, limit: int):
-            """SQL 層篩選 + 排序 + LIMIT，只回傳需要的資料"""
+        def _query_raw_monthly(year: int, month: int, text_filters: tuple,
+                               search: str, limit: int,
+                               numeric_filters: tuple = ()):
+            """SQL 層篩選 + 排序 + LIMIT，只回傳需要的資料。
+
+            text_filters: tuple of (column, tuple_of_values) — 每個欄位多選 AND 交集
+            numeric_filters: tuple of (column, operator, value) 三元組
+            """
             conn = get_db_connection()
             if conn is None:
                 return pd.DataFrame(), 0
             conditions = ["year = ?", "month = ?"]
             params: list = [year, month]
-            if tier != "All":
-                conditions.append("sub_tier = ?")
-                params.append(tier)
-            if am != "All":
-                conditions.append("am = ?")
-                params.append(am)
-            if pg != "All":
-                conditions.append("sp_primary_pg = ?")
-                params.append(pg)
+            # 文字欄位篩選（multiselect AND 交集）
+            for col, vals in text_filters:
+                if vals:
+                    ph = ",".join(["?"] * len(vals))
+                    conditions.append(f"{col} IN ({ph})")
+                    params.extend(vals)
             if search:
                 conditions.append(
                     "(mcid LIKE ? OR merchant_name LIKE ? OR sp_primary_gl LIKE ?)"
                 )
                 pattern = f"%{search}%"
                 params.extend([pattern, pattern, pattern])
+            # 數值篩選
+            _valid_ops = {"=", ">", ">=", "<", "<="}
+            for col, op, val in numeric_filters:
+                if op not in _valid_ops:
+                    continue
+                conditions.append(f"{col} {op} ?")
+                params.append(val)
 
             where = " AND ".join(conditions)
 
-            # 先取總筆數（快，只 COUNT）
             total = conn.execute(
                 f"SELECT COUNT(*) FROM pkey_raw_monthly WHERE {where}", params
             ).fetchone()[0]
 
-            # 再取資料（帶 LIMIT）
             df = pd.read_sql(
                 f"SELECT * FROM pkey_raw_monthly WHERE {where} "
                 f"ORDER BY mtd_ord_gms DESC LIMIT ?",
@@ -1086,57 +1183,211 @@ with tab_base:
         if raw_ml.empty:
             st.info("pkey_raw_monthly 沒有資料。請先執行 sync-mbr。")
         else:
-            # 月份選擇器
-            ym_options = [f"{int(r['year'])}-{int(r['month']):02d}" for _, r in raw_ml.iterrows()]
-            bc_ym = st.selectbox("月份", ym_options, key="base_raw_ym")
-            sel_year, sel_month = int(bc_ym.split("-")[0]), int(bc_ym.split("-")[1])
+            @st.fragment
+            def _mbr_base_fragment():
+                # 月份選擇器
+                ym_options = [f"{int(r['year'])}-{int(r['month']):02d}" for _, r in raw_ml.iterrows()]
+                bc_ym = st.selectbox("月份", ym_options, key="base_raw_ym")
+                sel_year, sel_month = int(bc_ym.split("-")[0]), int(bc_ym.split("-")[1])
 
-            # 載入篩選器選項（極快，< 5ms）
-            opt_tiers, opt_ams, opt_pgs = _load_raw_filter_options(sel_year, sel_month)
+                # 載入篩選器選項
+                filter_options = _load_raw_filter_options(sel_year, sel_month)
+                _available_cols = sorted(filter_options.keys())
 
-            # 篩選器
-            bc1, bc2, bc3, bc4 = st.columns(4)
-            with bc1:
-                raw_tier_sel = st.selectbox("Sub Tier", ["All"] + opt_tiers, key="raw_tier")
-            with bc2:
-                raw_am_sel = st.selectbox("AM", ["All"] + opt_ams, key="raw_am")
-            with bc3:
-                raw_pg_sel = st.selectbox("Product Group", ["All"] + opt_pgs, key="raw_pg")
-            with bc4:
+                # 欄位顯示名稱 mapping
+                _COL_LABELS = {
+                    "sub_tier": "Sub Tier", "am": "AM", "sp_primary_pg": "Product Group",
+                    "sp_primary_gl": "GL", "main_tier": "Main Tier", "status": "Status",
+                    "launch_year_cohort": "年資 Cohort", "marketplace": "Marketplace",
+                    "region": "Region", "launch_program": "Launch Program",
+                    "launch_channel": "Launch Channel", "launch_year_group": "Launch Year Group",
+                    "launch_year": "Launch Year", "is_brand_reg": "Brand Reg",
+                    "is_brand_rep": "Brand Rep", "is_carryover_nsr": "Carryover NSR",
+                    "seller_age": "Seller Age",
+                }
+                _col_display = [_COL_LABELS.get(c, c) for c in _available_cols]
+                _col_reverse = {_COL_LABELS.get(c, c): c for c in _available_cols}
+
+                # 搜尋框
                 raw_search = st.text_input(":material/search: 搜尋", key="raw_search",
                                            placeholder="名稱 / MCID / GL")
 
-            # 顯示筆數控制
-            show_all_raw = st.toggle("顯示全部", value=False, key="raw_show_all")
-            display_limit = 99999 if show_all_raw else 200
+                # ── 動態欄位篩選（可加可刪）──
+                text_selections: list[tuple] = []
 
-            # SQL 層查詢（只載入需要的資料）
-            raw_df, total_count = _query_raw_monthly(
-                sel_year, sel_month,
-                raw_tier_sel, raw_am_sel, raw_pg_sel,
-                raw_search, display_limit,
-            )
+                with st.expander(":material/filter_list: 欄位篩選（交集）", expanded=True):
+                    if "mbr_tf_count" not in st.session_state:
+                        st.session_state.mbr_tf_count = 1
 
-            showing = len(raw_df)
-            st.caption(
-                f"顯示 {showing:,} / {total_count:,} 筆 | "
-                f"{sel_year}-{sel_month:02d} | {len(raw_df.columns)} 欄"
-            )
+                    rows_to_delete = []
+                    for i in range(st.session_state.mbr_tf_count):
+                        tf1, tf2, tf3 = st.columns([2, 5, 0.5])
+                        with tf1:
+                            sel_col_display = st.selectbox(
+                                "欄位", ["（不篩選）"] + _col_display,
+                                key=f"mbr_tf_col_{i}", label_visibility="collapsed",
+                            )
+                        with tf2:
+                            if sel_col_display != "（不篩選）":
+                                db_col = _col_reverse[sel_col_display]
+                                col_options = filter_options.get(db_col, [])
+                                sel_vals = st.multiselect(
+                                    "值", col_options,
+                                    key=f"mbr_tf_val_{i}", label_visibility="collapsed",
+                                    placeholder="選擇值...",
+                                )
+                                if sel_vals:
+                                    text_selections.append((db_col, tuple(sel_vals)))
+                            else:
+                                st.empty()
+                        with tf3:
+                            if st.button("✕", key=f"mbr_tf_del_{i}", help="刪除此條件"):
+                                rows_to_delete.append(i)
 
-            # 金額欄位格式化
-            raw_money_cols = [c for c in raw_df.columns if any(
-                kw in c for kw in ["gms", "ops", "spend", "revenue", "asp"]
-            )]
-            raw_col_config = {}
-            for c in raw_money_cols:
-                if c in raw_df.columns:
-                    raw_col_config[c] = st.column_config.NumberColumn(format="$%.0f")
+                    bc_add, bc_reset = st.columns([1, 1])
+                    with bc_add:
+                        if st.button(":material/add: 新增條件", key="mbr_tf_add"):
+                            st.session_state.mbr_tf_count += 1
+                    with bc_reset:
+                        if st.button(":material/refresh: 重置", key="mbr_tf_reset"):
+                            keys_to_clear = [k for k in st.session_state if k.startswith("mbr_tf_")]
+                            for k in keys_to_clear:
+                                del st.session_state[k]
+                            st.session_state.mbr_tf_count = 1
 
-            st.dataframe(raw_df, use_container_width=True, hide_index=True,
-                         height=500, column_config=raw_col_config)
+                    if rows_to_delete:
+                        old_count = st.session_state.mbr_tf_count
+                        new_idx = 0
+                        new_state = {}
+                        for old_idx in range(old_count):
+                            if old_idx in rows_to_delete:
+                                continue
+                            for suffix in ["col", "val"]:
+                                old_key = f"mbr_tf_{suffix}_{old_idx}"
+                                new_key = f"mbr_tf_{suffix}_{new_idx}"
+                                if old_key in st.session_state:
+                                    new_state[new_key] = st.session_state[old_key]
+                            new_idx += 1
+                        keys_to_clear = [k for k in st.session_state if k.startswith("mbr_tf_") and k != "mbr_tf_count"]
+                        for k in keys_to_clear:
+                            del st.session_state[k]
+                        for k, v in new_state.items():
+                            st.session_state[k] = v
+                        st.session_state.mbr_tf_count = max(new_idx, 1)
 
-            if showing < total_count and not show_all_raw:
-                st.caption(f"預覽前 {showing} 筆（GMS 排序），開啟「顯示全部」看完整 {total_count:,} 筆")
+                # ── 進階數值篩選 ──
+                _NUMERIC_COLS_MBR = [
+                    ("mtd_ord_gms", "GMS"), ("ytd_ord_gms", "YTD GMS"),
+                    ("mtd_fba_ord_gms", "FBA GMS"), ("mtd_ba", "BA"),
+                    ("mtd_fba_ba", "FBA BA"), ("mtd_new_fba_ba_90d", "New FBA BA"),
+                    ("mtd_fba_awagv", "FBA AWAGV"), ("mtd_fba_awas", "FBA AWAS"),
+                    ("mtd_sa_revenue_usd", "Ads Spend"), ("mtd_sa_attributed_ops_usd", "Ads OPS"),
+                    ("mtd_promotion_count", "Promo Count"), ("mtd_promotion_ops", "Promo OPS"),
+                    ("mtd_deal_count", "Deal Count"), ("mtd_deal_ops", "Deal OPS"),
+                    ("mtd_coupon_count", "Coupon Count"), ("mtd_coupon_ops", "Coupon OPS"),
+                    ("mtd_gv", "GV"), ("mtd_ord_units", "Units"),
+                    ("mtd_ord_asp", "ASP"), ("mtd_awas", "AWAS"),
+                    ("mtd_awagv", "AWAGV"),
+                ]
+                _NUM_COL_MAP = {label: col for col, label in _NUMERIC_COLS_MBR}
+                _NUM_LABELS = [label for _, label in _NUMERIC_COLS_MBR]
+                _OPS = [">=", "<=", ">", "<", "="]
+
+                numeric_filters_raw: list[tuple] = []
+
+                with st.expander(":material/filter_alt: 進階數值篩選", expanded=False):
+                    if "mbr_nf_count" not in st.session_state:
+                        st.session_state.mbr_nf_count = 1
+
+                    nf_rows_to_delete = []
+                    for i in range(st.session_state.mbr_nf_count):
+                        nf1, nf2, nf3, nf4 = st.columns([3, 1.5, 2, 0.5])
+                        with nf1:
+                            sel_col = st.selectbox(
+                                "欄位", ["（不篩選）"] + _NUM_LABELS,
+                                key=f"mbr_nf_col_{i}", label_visibility="collapsed",
+                            )
+                        with nf2:
+                            sel_op = st.selectbox(
+                                "運算子", _OPS,
+                                key=f"mbr_nf_op_{i}", label_visibility="collapsed",
+                            )
+                        with nf3:
+                            sel_val = st.number_input(
+                                "值", value=0.0, step=1.0,
+                                key=f"mbr_nf_val_{i}", label_visibility="collapsed",
+                            )
+                        with nf4:
+                            if st.button("✕", key=f"mbr_nf_del_{i}", help="刪除此條件"):
+                                nf_rows_to_delete.append(i)
+                        if sel_col != "（不篩選）":
+                            db_col = _NUM_COL_MAP[sel_col]
+                            numeric_filters_raw.append((db_col, sel_op, sel_val))
+
+                    nf_add, nf_reset = st.columns([1, 1])
+                    with nf_add:
+                        if st.button(":material/add: 新增條件", key="mbr_nf_add"):
+                            st.session_state.mbr_nf_count += 1
+                    with nf_reset:
+                        if st.button(":material/refresh: 重置", key="mbr_nf_reset"):
+                            keys_to_clear = [k for k in st.session_state if k.startswith("mbr_nf_")]
+                            for k in keys_to_clear:
+                                del st.session_state[k]
+                            st.session_state.mbr_nf_count = 1
+
+                    if nf_rows_to_delete:
+                        old_count = st.session_state.mbr_nf_count
+                        new_idx = 0
+                        new_state = {}
+                        for old_idx in range(old_count):
+                            if old_idx in nf_rows_to_delete:
+                                continue
+                            for suffix in ["col", "op", "val"]:
+                                old_key = f"mbr_nf_{suffix}_{old_idx}"
+                                new_key = f"mbr_nf_{suffix}_{new_idx}"
+                                if old_key in st.session_state:
+                                    new_state[new_key] = st.session_state[old_key]
+                            new_idx += 1
+                        keys_to_clear = [k for k in st.session_state if k.startswith("mbr_nf_") and k != "mbr_nf_count"]
+                        for k in keys_to_clear:
+                            del st.session_state[k]
+                        for k, v in new_state.items():
+                            st.session_state[k] = v
+                        st.session_state.mbr_nf_count = max(new_idx, 1)
+
+                # 顯示筆數控制
+                show_all_raw = st.toggle("顯示全部", value=False, key="raw_show_all")
+                display_limit = 99999 if show_all_raw else 200
+
+                # SQL 層查詢
+                raw_df, total_count = _query_raw_monthly(
+                    sel_year, sel_month,
+                    tuple(text_selections),
+                    raw_search, display_limit,
+                    tuple(numeric_filters_raw),
+                )
+
+                showing = len(raw_df)
+                st.caption(
+                    f"顯示 {showing:,} / {total_count:,} 筆 | "
+                    f"{sel_year}-{sel_month:02d} | {len(raw_df.columns)} 欄"
+                )
+
+                raw_money_cols = [c for c in raw_df.columns if any(
+                    kw in c for kw in ["gms", "ops", "spend", "revenue", "asp"]
+                )]
+                raw_col_config = {}
+                for c in raw_money_cols:
+                    if c in raw_df.columns:
+                        raw_col_config[c] = st.column_config.NumberColumn(format="$%.0f")
+
+                st.dataframe(raw_df, use_container_width=True, hide_index=True,
+                             height=500, column_config=raw_col_config)
+
+                if showing < total_count and not show_all_raw:
+                    st.caption(f"預覽前 {showing} 筆（GMS 排序），開啟「顯示全部」看完整 {total_count:,} 筆")
+
+            _mbr_base_fragment()
 
     else:
         # ── WBR：SQL 層篩選 + lazy loading ──
@@ -1162,8 +1413,14 @@ with tab_base:
         @st.cache_data(ttl=120)
         def _query_wbr_base(tier_filter: tuple, owner_filter: str,
                             q1_am: str, q2_am: str, coop: str,
-                            search: str, limit: int):
-            """SQL 層 JOIN sellers + performance_data 最新週，帶篩選 + LIMIT"""
+                            sub_tiers: tuple, pgs: tuple,
+                            search: str, limit: int,
+                            numeric_filters: tuple = ()):
+            """SQL 層 JOIN sellers + performance_data 最新週，帶篩選 + LIMIT
+
+            sub_tiers / pgs: tuple of selected values（空 = 不篩選）
+            numeric_filters: tuple of (column, operator, value) 三元組
+            """
             conn = get_db_connection()
             if conn is None:
                 return pd.DataFrame(), 0, "No data"
@@ -1178,7 +1435,6 @@ with tab_base:
             ly, lw = latest[0], latest[1]
 
             # 建構 SQL
-            # 先用 subquery 把最新週的 performance_data 按 mcid 加總
             sql = """
                 SELECT s.mcid, s.name, s.owner, s.q1_am, s.q2_am,
                        s.cooperation_level, s.created_at, s.updated_at,
@@ -1242,10 +1498,25 @@ with tab_base:
             if coop != "All":
                 sql += " AND s.cooperation_level = ?"
                 params.append(coop)
+            if sub_tiers:
+                ph = ",".join(["?"] * len(sub_tiers))
+                sql += f" AND s.sub_tier IN ({ph})"
+                params.extend(sub_tiers)
+            if pgs:
+                ph = ",".join(["?"] * len(pgs))
+                sql += f" AND s.sp_primary_pg IN ({ph})"
+                params.extend(pgs)
             if search:
                 sql += " AND (s.name LIKE ? OR s.mcid LIKE ?)"
                 pattern = f"%{search}%"
                 params.extend([pattern, pattern])
+            # 數值篩選（作用在 JOIN 後的欄位，包含 p.* 和 s.* 欄位）
+            _valid_ops = {"=", ">", ">=", "<", "<="}
+            for col, op, val in numeric_filters:
+                if op not in _valid_ops:
+                    continue
+                sql += f" AND {col} {op} ?"
+                params.append(val)
 
             # COUNT
             count_sql = f"SELECT COUNT(*) FROM ({sql})"
@@ -1262,68 +1533,176 @@ with tab_base:
         # 篩選器選項
         opt_q1s, opt_q2s, opt_coops = _load_wbr_filter_options()
 
-        bc2, bc3, bc4, bc5 = st.columns(4)
-        with bc2:
-            base_q1 = st.selectbox("Q1 AM", ["All"] + opt_q1s, key="base_q1")
-        with bc3:
-            base_q2 = st.selectbox("Q2 AM", ["All"] + opt_q2s, key="base_q2")
-        with bc4:
-            base_coop = st.selectbox("配合度", ["All"] + opt_coops, key="base_coop")
-        with bc5:
-            base_search = st.text_input(":material/search: 搜尋", key="base_search", placeholder="名稱 / MCID")
+        @st.cache_data(ttl=300)
+        def _load_wbr_seller_filter_options():
+            """載入 sellers 表的 sub_tier / sp_primary_pg 選項"""
+            conn = get_db_connection()
+            if conn is None:
+                return [], []
+            sub_tiers = [r[0] for r in conn.execute(
+                "SELECT DISTINCT sub_tier FROM sellers WHERE sub_tier IS NOT NULL AND sub_tier != '' ORDER BY sub_tier"
+            ).fetchall()]
+            pgs = [r[0] for r in conn.execute(
+                "SELECT DISTINCT sp_primary_pg FROM sellers WHERE sp_primary_pg IS NOT NULL AND sp_primary_pg != '' ORDER BY sp_primary_pg"
+            ).fetchall()]
+            conn.close()
+            return sub_tiers, pgs
 
-        show_all = st.toggle("顯示全部", value=False, key="base_show_all")
-        wbr_limit = 99999 if show_all else 200
+        opt_sub_tiers_wbr, opt_pgs_wbr = _load_wbr_seller_filter_options()
 
-        display_base, wbr_total, perf_week_label = _query_wbr_base(
-            tuple(selected_tiers) if selected_tiers else (),
-            selected_owner,
-            base_q1, base_q2, base_coop,
-            base_search, wbr_limit,
-        )
+        @st.fragment
+        def _wbr_base_fragment():
+            bc1, bc2, bc3 = st.columns(3)
+            with bc1:
+                base_sub_tier = st.multiselect("Sub Tier", opt_sub_tiers_wbr, key="base_sub_tier",
+                                               placeholder="全部")
+            with bc2:
+                base_pg = st.multiselect("Product Group", opt_pgs_wbr, key="base_pg",
+                                         placeholder="全部")
+            with bc3:
+                base_search = st.text_input(":material/search: 搜尋", key="base_search", placeholder="名稱 / MCID")
 
-        showing = len(display_base)
-        st.caption(
-            f"顯示 {showing:,} / {wbr_total:,} 筆 | "
-            f"績效數據：{perf_week_label}"
-        )
+            bc4, bc5, bc6 = st.columns(3)
+            with bc4:
+                base_q1 = st.selectbox("Q1 AM", ["All"] + opt_q1s, key="base_q1")
+            with bc5:
+                base_q2 = st.selectbox("Q2 AM", ["All"] + opt_q2s, key="base_q2")
+            with bc6:
+                base_coop = st.selectbox("配合度", ["All"] + opt_coops, key="base_coop")
 
-        # Column config
-        col_config = {}
-        money_cols = ["gms", "ytd_gms", "ads_spend", "ads_ops", "ytd_ads_spend", "ytd_ads_ops", "promo_ops"]
-        int_cols_base = ["ba", "fba_ba", "promo_count", "active_seller", "gv"]
+            # ── 進階數值篩選 ──
+            _NUMERIC_COLS_WBR = [
+                ("gms", "GMS"), ("ytd_gms", "YTD GMS"),
+                ("ba", "BA"), ("fba_ba", "FBA BA"),
+                ("new_fba_ba", "New FBA BA"),
+                ("fba_awagv", "FBA AWAGV"), ("fba_awas", "FBA AWAS"),
+                ("ads_spend", "Ads Spend"), ("ads_ops", "Ads OPS"),
+                ("ytd_ads_spend", "YTD Ads Spend"), ("ytd_ads_ops", "YTD Ads OPS"),
+                ("promo_count", "Promo Count"), ("promo_ops", "Promo OPS"),
+                ("active_seller", "Active Seller"), ("gv", "GV"),
+            ]
+            _NUM_COL_MAP_W = {label: col for col, label in _NUMERIC_COLS_WBR}
+            _NUM_LABELS_W = [label for _, label in _NUMERIC_COLS_WBR]
+            _OPS_W = [">=", "<=", ">", "<", "="]
 
-        COLUMN_LABELS = {
-            "mcid": "MCID", "name": "名稱", "owner": "Owner",
-            "cooperation_level": "配合度",
-            "q1_am": "Q1 AM", "q2_am": "Q2 AM",
-            "created_at": "建立時間", "updated_at": "更新時間",
-            "gms": "GMS", "ytd_gms": "YTD GMS",
-            "ba": "BA", "fba_ba": "FBA BA",
-            "new_fba_ba": "New FBA BA", "fba_awagv": "FBA AWAGV", "fba_awas": "FBA AWAS",
-            "ads_spend": "Ads Spend", "ads_ops": "Ads OPS",
-            "ytd_ads_spend": "YTD Ads Spend", "ytd_ads_ops": "YTD Ads OPS",
-            "promo_count": "Promo Count", "promo_ops": "Promo OPS",
-            "active_seller": "Active", "gv": "GV",
-            "tags": "Tags",
-        }
+            numeric_filters_wbr: list[tuple] = []
 
-        for col in display_base.columns:
-            label = COLUMN_LABELS.get(col)
-            if not label:
-                continue
-            if col in money_cols:
-                col_config[col] = st.column_config.NumberColumn(label, format="$%.0f")
-            elif col in int_cols_base:
-                col_config[col] = st.column_config.NumberColumn(label, format="%.0f")
-            else:
-                col_config[col] = st.column_config.Column(label)
+            with st.expander(":material/filter_alt: 進階數值篩選", expanded=False):
+                if "wbr_nf_count" not in st.session_state:
+                    st.session_state.wbr_nf_count = 1
 
-        st.dataframe(display_base, use_container_width=True, hide_index=True,
-                     height=500, column_config=col_config)
+                wbr_nf_rows_to_delete = []
+                for i in range(st.session_state.wbr_nf_count):
+                    nf1, nf2, nf3, nf4 = st.columns([3, 1.5, 2, 0.5])
+                    with nf1:
+                        sel_col = st.selectbox(
+                            "欄位", ["（不篩選）"] + _NUM_LABELS_W,
+                            key=f"wbr_nf_col_{i}", label_visibility="collapsed",
+                        )
+                    with nf2:
+                        sel_op = st.selectbox(
+                            "運算子", _OPS_W,
+                            key=f"wbr_nf_op_{i}", label_visibility="collapsed",
+                        )
+                    with nf3:
+                        sel_val = st.number_input(
+                            "值", value=0.0, step=1.0,
+                            key=f"wbr_nf_val_{i}", label_visibility="collapsed",
+                        )
+                    with nf4:
+                        if st.button("✕", key=f"wbr_nf_del_{i}", help="刪除此條件"):
+                            wbr_nf_rows_to_delete.append(i)
+                    if sel_col != "（不篩選）":
+                        db_col = _NUM_COL_MAP_W[sel_col]
+                        numeric_filters_wbr.append((db_col, sel_op, sel_val))
 
-        if showing < wbr_total and not show_all:
-            st.caption(f"預覽前 {showing} 筆（GMS 排序），開啟「顯示全部」看完整 {wbr_total:,} 筆")
+                wnf_add, wnf_reset = st.columns([1, 1])
+                with wnf_add:
+                    if st.button(":material/add: 新增條件", key="wbr_nf_add"):
+                        st.session_state.wbr_nf_count += 1
+                with wnf_reset:
+                    if st.button(":material/refresh: 重置", key="wbr_nf_reset"):
+                        keys_to_clear = [k for k in st.session_state if k.startswith("wbr_nf_")]
+                        for k in keys_to_clear:
+                            del st.session_state[k]
+                        st.session_state.wbr_nf_count = 1
+
+                if wbr_nf_rows_to_delete:
+                    old_count = st.session_state.wbr_nf_count
+                    new_idx = 0
+                    new_state = {}
+                    for old_idx in range(old_count):
+                        if old_idx in wbr_nf_rows_to_delete:
+                            continue
+                        for suffix in ["col", "op", "val"]:
+                            old_key = f"wbr_nf_{suffix}_{old_idx}"
+                            new_key = f"wbr_nf_{suffix}_{new_idx}"
+                            if old_key in st.session_state:
+                                new_state[new_key] = st.session_state[old_key]
+                        new_idx += 1
+                    keys_to_clear = [k for k in st.session_state if k.startswith("wbr_nf_") and k != "wbr_nf_count"]
+                    for k in keys_to_clear:
+                        del st.session_state[k]
+                    for k, v in new_state.items():
+                        st.session_state[k] = v
+                    st.session_state.wbr_nf_count = max(new_idx, 1)
+
+            show_all = st.toggle("顯示全部", value=False, key="base_show_all")
+            wbr_limit = 99999 if show_all else 200
+
+            display_base, wbr_total, perf_week_label = _query_wbr_base(
+                tuple(selected_tiers) if selected_tiers else (),
+                selected_owner,
+                base_q1, base_q2, base_coop,
+                tuple(base_sub_tier), tuple(base_pg),
+                base_search, wbr_limit,
+                tuple(numeric_filters_wbr),
+            )
+
+            showing = len(display_base)
+            st.caption(
+                f"顯示 {showing:,} / {wbr_total:,} 筆 | "
+                f"績效數據：{perf_week_label}"
+            )
+
+            # Column config
+            col_config = {}
+            money_cols = ["gms", "ytd_gms", "ads_spend", "ads_ops", "ytd_ads_spend", "ytd_ads_ops", "promo_ops"]
+            int_cols_base = ["ba", "fba_ba", "promo_count", "active_seller", "gv"]
+
+            COLUMN_LABELS = {
+                "mcid": "MCID", "name": "名稱", "owner": "Owner",
+                "cooperation_level": "配合度",
+                "q1_am": "Q1 AM", "q2_am": "Q2 AM",
+                "created_at": "建立時間", "updated_at": "更新時間",
+                "gms": "GMS", "ytd_gms": "YTD GMS",
+                "ba": "BA", "fba_ba": "FBA BA",
+                "new_fba_ba": "New FBA BA", "fba_awagv": "FBA AWAGV", "fba_awas": "FBA AWAS",
+                "ads_spend": "Ads Spend", "ads_ops": "Ads OPS",
+                "ytd_ads_spend": "YTD Ads Spend", "ytd_ads_ops": "YTD Ads OPS",
+                "promo_count": "Promo Count", "promo_ops": "Promo OPS",
+                "active_seller": "Active", "gv": "GV",
+                "tags": "Tags",
+            }
+
+            for col in display_base.columns:
+                label = COLUMN_LABELS.get(col)
+                if not label:
+                    continue
+                if col in money_cols:
+                    col_config[col] = st.column_config.NumberColumn(label, format="$%.0f")
+                elif col in int_cols_base:
+                    col_config[col] = st.column_config.NumberColumn(label, format="%.0f")
+                else:
+                    col_config[col] = st.column_config.Column(label)
+
+            st.dataframe(display_base, use_container_width=True, hide_index=True,
+                         height=500, column_config=col_config)
+
+            if showing < wbr_total and not show_all:
+                st.caption(f"預覽前 {showing} 筆（GMS 排序），開啟「顯示全部」看完整 {wbr_total:,} 筆")
+
+        _wbr_base_fragment()
 
 # ── 底部 ──
 st.markdown("---")

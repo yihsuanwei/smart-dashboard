@@ -312,8 +312,8 @@ def calculate_metric_yoy_mom(sales_df, date_col, metric_col, original_date, cvr_
         if not last_year_data.empty:
             last_year_value = last_year_data.iloc[0]
             if cvr_mode:
-                # CVR 使用差值 * 10000 = bps
-                yoy_change = (current_value - last_year_value) * 10000
+                # CVR 使用差值 * 100 = bps（BR 的 CVR 欄位已是百分比格式，如 3.64 = 3.64%）
+                yoy_change = (current_value - last_year_value) * 100
             elif last_year_value != 0:
                 yoy_change = ((current_value - last_year_value) / last_year_value) * 100
 
@@ -321,8 +321,8 @@ def calculate_metric_yoy_mom(sales_df, date_col, metric_col, original_date, cvr_
         if not last_month_data.empty:
             last_month_value = last_month_data.iloc[0]
             if cvr_mode:
-                # CVR 使用差值 * 10000 = bps
-                mom_change = (current_value - last_month_value) * 10000
+                # CVR 使用差值 * 100 = bps（BR 的 CVR 欄位已是百分比格式，如 3.64 = 3.64%）
+                mom_change = (current_value - last_month_value) * 100
             elif last_month_value != 0:
                 mom_change = ((current_value - last_month_value) / last_month_value) * 100
     except:
@@ -481,6 +481,13 @@ if seller_list:
         )
 
     current_seller_key, current_mcid = seller_options_map[selected_seller_label]
+
+    # 當賣家切換時，重設 Advertising CID 選擇器，讓 auto_cid_index 生效
+    if st.session_state.get("_prev_seller") != selected_seller_label:
+        st.session_state["_prev_seller"] = selected_seller_label
+        if "ads_cid_selector" in st.session_state:
+            del st.session_state["ads_cid_selector"]
+            st.rerun()
 
     with mcid_col:
         if current_mcid:
@@ -3145,19 +3152,29 @@ if "P0 MCID MBR" in loaded_data:
         cleaned_cids = sorted(list(set(cleaned_cids)))
 
         # 根據賣家 MCID 自動預選
-        auto_cid_index = 0  # 預設「請選擇...」
+        auto_cid_value = None
         if seller_list and current_mcid:
             # 嘗試在 cleaned_cids 中找到匹配的 MCID
-            for idx, cid in enumerate(cleaned_cids):
+            for cid in cleaned_cids:
                 if cid == current_mcid or cid == str(current_mcid).strip():
-                    auto_cid_index = idx + 1  # +1 因為第一個是「請選擇...」
+                    auto_cid_value = cid
                     break
+
+        # 追蹤上次自動帶入的 MCID，當賣家切換時自動更新
+        prev_auto = st.session_state.get("_ads_auto_mcid")
+        if auto_cid_value and prev_auto != auto_cid_value:
+            st.session_state["ads_cid_selector"] = auto_cid_value
+            st.session_state["_ads_auto_mcid"] = auto_cid_value
+
+        # 初次載入且有匹配時，也要設定
+        if auto_cid_value and "ads_cid_selector" not in st.session_state:
+            st.session_state["ads_cid_selector"] = auto_cid_value
+            st.session_state["_ads_auto_mcid"] = auto_cid_value
 
         # 顯示下拉選單
         cid_input = st.selectbox(
             "選擇 CID (merchant_customer_id):",
             options=["請選擇..."] + cleaned_cids,
-            index=auto_cid_index,
             key="ads_cid_selector"
         )
 
