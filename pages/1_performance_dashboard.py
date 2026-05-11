@@ -1,6 +1,7 @@
 import streamlit as st
 from utils import list_uploaded_files, load_data_fast
 import pandas as pd
+import ai_insight
 
 import base64
 
@@ -561,10 +562,13 @@ else:
 
 # Overall Sales Summary 區塊（從 Sales Traffic Report 動態計算）
 if "Sales Traffic Report" in loaded_data:
-    # 標題與年份選擇器並排
-    header_col, year_select_col = st.columns([3, 1])
+    # 標題、AI 按鈕、年份選擇器並排
+    header_col, ai_col, year_select_col = st.columns([2.5, 1, 1])
     with header_col:
         st.header("Overall Sales Summary")
+    with ai_col:
+        st.markdown("<div style='margin-top: 22px;'></div>", unsafe_allow_html=True)
+        overall_ai_clicked = ai_insight.ai_button("overall")
 
     # 從 Sales Traffic Report 取得可用年份
     available_years = []
@@ -688,6 +692,9 @@ if "Sales Traffic Report" in loaded_data:
                 'CVR': None  # 需要計算：Total Order Items / Sessions × 100%
             }
 
+            # 收集 KPI 給 AI 用
+            ai_kpi_rows = []
+
             for metric in ytd_metrics:
                 with metric['column']:
                     col_name = metric_columns.get(metric['title'])
@@ -764,8 +771,27 @@ if "Sales Traffic Report" in loaded_data:
                         help_text=metric.get('help_text'),
                         show_change_percent=not metric.get('cvr_mode', False)  # CVR 不顯示 % 符號
                     )
+
+                    ai_kpi_rows.append({
+                        'name': metric['title'],
+                        'value': value_rounded,
+                        'yoy_pct': change,
+                        'is_bps': metric.get('cvr_mode', False),
+                        'decimal': metric.get('decimal', False),
+                    })
         except Exception as e:
             st.warning(f"計算 YTD 時發生錯誤: {e}")
+            ai_kpi_rows = []
+
+    # AI Insight：按了按鈕才呼叫
+    if overall_ai_clicked and ai_kpi_rows:
+        prompt = ai_insight.build_overall_prompt(
+            seller_name=current_seller_key or "未知賣家",
+            year=selected_ytd_year,
+            kpi_rows=ai_kpi_rows,
+        )
+        ai_insight.show_result("overall", prompt)
+    ai_insight.show_cached("overall")
 
     # 增加 KPI widgets 與下方元素的間距
     st.markdown("<div style='margin-bottom: 40px;'></div>", unsafe_allow_html=True)
@@ -1817,7 +1843,12 @@ if "Sales Traffic Report" in loaded_data:
 
 # Business Metrics 區塊
 if "Sales Traffic Report" in loaded_data:
-    st.header(":material/bar_chart: Business Metrics")
+    bm_header_col, bm_ai_col = st.columns([4, 1])
+    with bm_header_col:
+        st.header(":material/bar_chart: Business Metrics")
+    with bm_ai_col:
+        st.markdown("<div style='margin-top: 22px;'></div>", unsafe_allow_html=True)
+        bm_ai_clicked = ai_insight.ai_button("business_metrics")
 
     sales_df = loaded_data["Sales Traffic Report"]
 
@@ -1938,10 +1969,42 @@ if "Sales Traffic Report" in loaded_data:
                 }
             ]
 
-            # 批量渲染業務指標
+            # 批量渲染業務指標 + 同步收集 AI 用的當期/前期數值
+            bm_current = {}
+            bm_prior = {}
             for metric in business_metrics:
                 with metric['column']:
                     render_business_metric_widget(sales_df, date_col, original_date, metric)
+
+                # 找出同名欄位（與 widget 內部邏輯一致）
+                target_cols = [c for c in sales_df.columns
+                               if any(kw in c.lower() for kw in metric['column_keywords'])]
+                basic_cols = [c for c in target_cols
+                              if not any(s in c.lower() for s in ['this year so far', '% change', 'last year'])]
+                metric_col = (basic_cols or target_cols or [None])[0]
+                if metric_col is None:
+                    continue
+
+                cur_val, _, mom_change = calculate_metric_yoy_mom(
+                    sales_df, date_col, metric_col, original_date,
+                    cvr_mode=metric.get('cvr_mode', False),
+                )
+                if isinstance(cur_val, (int, float)):
+                    bm_current[metric['title']] = float(cur_val)
+                    if mom_change is not None and not metric.get('cvr_mode', False) and mom_change != 0:
+                        # 反推前期值（避免再 query 一次）
+                        bm_prior[metric['title']] = float(cur_val) / (1 + mom_change / 100)
+
+        # AI Insight
+        if bm_ai_clicked and bm_current:
+            prompt = ai_insight.build_business_metrics_prompt(
+                seller_name=current_seller_key or "未知賣家",
+                selected_date=selected_date,
+                current_metrics=bm_current,
+                prior_metrics=bm_prior,
+            )
+            ai_insight.show_result("business_metrics", prompt)
+        ai_insight.show_cached("business_metrics")
 
         # 在 L819 之後添加圖表區塊
         st.markdown("---")
@@ -2098,9 +2161,22 @@ if "Sales Traffic Report" in loaded_data:
 # ASIN Level 區塊
 if "Asin Report" in loaded_data:
     st.markdown("---")
-    st.header(":material/inventory_2: ASIN Level")
+    asin_header_col, asin_ai_col = st.columns([4, 1])
+    with asin_header_col:
+        st.header(":material/inventory_2: ASIN Level")
+    with asin_ai_col:
+        st.markdown("<div style='margin-top: 22px;'></div>", unsafe_allow_html=True)
+        asin_ai_clicked = ai_insight.ai_button("asin_level")
 
     asin_df = loaded_data["Asin Report"]
+
+    if asin_ai_clicked:
+        prompt = ai_insight.build_asin_prompt(
+            seller_name=current_seller_key or "未知賣家",
+            asin_df=asin_df,
+        )
+        ai_insight.show_result("asin_level", prompt)
+    ai_insight.show_cached("asin_level")
 
     # 創建三個分頁（使用自訂 CSS 增加字體大小）
     st.markdown("""
