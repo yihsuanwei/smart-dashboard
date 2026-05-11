@@ -56,11 +56,20 @@ def _bedrock_client():
 
 
 def _invoke(user_prompt: str, max_tokens: int = 1024, system: str = SYSTEM_PROMPT) -> str:
+    return _invoke_messages(
+        [{"role": "user", "content": user_prompt}],
+        max_tokens=max_tokens,
+        system=system,
+    )
+
+
+def _invoke_messages(messages: list, max_tokens: int = 1024, system: str = SYSTEM_PROMPT) -> str:
+    """Multi-turn invoke — messages: [{"role":"user","content":"..."}, {"role":"assistant",...}, ...]"""
     body = {
         "anthropic_version": "bedrock-2023-05-31",
         "max_tokens": max_tokens,
         "system": system,
-        "messages": [{"role": "user", "content": user_prompt}],
+        "messages": messages,
     }
     resp = _bedrock_client().invoke_model(
         modelId=MODEL_ID,
@@ -71,7 +80,6 @@ def _invoke(user_prompt: str, max_tokens: int = 1024, system: str = SYSTEM_PROMP
     text = payload["content"][0]["text"]
     stop_reason = payload.get("stop_reason", "")
     if stop_reason == "max_tokens":
-        # 讓上層知道被截斷，可以選擇重試或處理
         raise ValueError(
             f"回應在 {max_tokens} tokens 處被截斷（stop_reason=max_tokens）。"
             f"已收到 {len(text)} 字元。"
@@ -89,13 +97,14 @@ def _df_to_markdown(df: pd.DataFrame, max_rows: int = 20) -> str:
         return truncated.to_string(index=False)
 
 
-def ai_button(section_key: str, label: str = "AI 分析") -> bool:
-    """Render the trigger button (tertiary style — small, no fill)."""
+def ai_button(section_key: str) -> bool:
+    """Render the trigger button (tertiary, icon-only — keep header clean)."""
     return st.button(
-        label,
+        "",
         key=f"btn_{section_key}",
         type="tertiary",
         icon=":material/auto_awesome:",
+        help="AI 分析",
     )
 
 
@@ -183,21 +192,32 @@ def _manual_mwinit_button(section_key: str) -> None:
             st.error(f"mwinit 失敗：{msg}\n\n請改在 PowerShell 手動跑 `mwinit -f`。")
 
 
-def show_result(section_key: str, prompt: str) -> None:
-    """Call Bedrock. 若憑證過期 → 自動跑 mwinit -f → 自動重試一次。"""
+def _save_messages(section_key: str, messages: list, latest_text: str) -> None:
     state_key = f"ai_insight_{section_key}"
+    msg_key = f"ai_messages_{section_key}"
+    st.session_state[state_key] = latest_text
+    st.session_state[msg_key] = messages
 
+
+def show_result(section_key: str, prompt: str) -> None:
+    """Call Bedrock with single user prompt. 若憑證過期 → 自動跑 mwinit -f → 自動重試一次。"""
+    messages = [{"role": "user", "content": prompt}]
+    _run_invoke_with_recovery(section_key, messages)
+
+
+def _run_invoke_with_recovery(section_key: str, messages: list) -> None:
+    """Multi-turn invoke + 憑證過期自動 mwinit + 重試。"""
     # 第一次嘗試
     try:
         with st.spinner("Claude Opus 4.7 分析中…（約 10–30 秒）"):
-            result = _invoke(prompt)
-        st.session_state[state_key] = result
+            result = _invoke_messages(messages)
+        new_msgs = messages + [{"role": "assistant", "content": result}]
+        _save_messages(section_key, new_msgs, result)
         return
     except Exception as e:
         if not _is_credential_exception(e):
             st.error(_format_client_error(e))
             return
-        first_error = e
 
     # 憑證過期 → 自動跑 mwinit
     st.warning("AWS 憑證過期，自動觸發 mwinit — 請完成瀏覽器 SSO + 碰一下 YubiKey。")
@@ -211,8 +231,9 @@ def show_result(section_key: str, prompt: str) -> None:
     st.info("mwinit 成功，自動重試 AI 分析…")
     try:
         with st.spinner("Claude Opus 4.7 分析中…（約 10–30 秒）"):
-            result = _invoke(prompt)
-        st.session_state[state_key] = result
+            result = _invoke_messages(messages)
+        new_msgs = messages + [{"role": "assistant", "content": result}]
+        _save_messages(section_key, new_msgs, result)
     except Exception as e:
         if _is_credential_exception(e):
             st.error("mwinit 完成但憑證仍無效，可能是 ada 還沒重簽。等 5 秒再試一次。")
@@ -292,12 +313,43 @@ def show_cached(section_key: str, seller_name: str = "") -> None:
     # 與上方區塊隔開
     st.space("medium")
 
-    # 顯示當前 session 的 AI 結果 + 儲存按鈕
+    # 顯示當前 session 的 AI 結果 + 儲存按鈕 + 追問框
     if has_current:
+        msg_key = f"ai_messages_{section_key}"
+        messages = st.session_state.get(msg_key, [])
+        # 算對話輪數（每一個 user 訊息算一輪，第一輪是原 prompt）
+        turn_count = sum(1 for m in messages if m.get("role") == "user")
+
         with st.container(border=True):
+            label = "AI Insight" if turn_count <= 1 else f"AI Insight（已追問 {turn_count - 1} 次）"
             st.markdown(
-                f"**:material/psychology: AI Insight**\n\n{st.session_state[state_key]}"
+                f"**:material/psychology: {label}**\n\n{st.session_state[state_key]}"
             )
+
+            # 追問框（多輪對話）
+            if messages:
+                st.space("small")
+                followup_key = f"followup_{section_key}"
+                col_q, col_send = st.columns([4, 1], vertical_alignment="bottom")
+                with col_q:
+                    followup = st.text_input(
+                        "追問或修正",
+                        key=followup_key,
+                        placeholder="例：再分析一次，著重在 ASIN B0XXX；或：太保守了，給我激進版",
+                    )
+                with col_send:
+                    if st.button(
+                        "送出追問",
+                        key=f"send_followup_{section_key}",
+                        icon=":material/send:",
+                        type="primary",
+                        disabled=not followup,
+                    ):
+                        new_msgs = messages + [{"role": "user", "content": followup}]
+                        _run_invoke_with_recovery(section_key, new_msgs)
+                        # 清掉輸入框，避免重複送
+                        st.session_state.pop(followup_key, None)
+                        st.rerun()
 
             if seller_name:
                 st.space("small")
@@ -680,6 +732,7 @@ def render_ai_tool_popover(seller_name: str) -> None:
             st.session_state[BULK_DONE_FLAG] = False
             for sec in ALL_SECTIONS:
                 st.session_state.pop(f"ai_insight_{sec}", None)
+                st.session_state.pop(f"ai_messages_{sec}", None)
             st.rerun()
 
         # 動作：匯出執行計畫
@@ -901,6 +954,70 @@ def _to_num(s):
     )
 
 
+# 四象限 SOP（跟 dashboard 的 classify_asin 對應）
+QUADRANT_SOP = """**四象限分析 SOP（依 Sessions vs CVR 中位數）：**
+- 高流量高轉化 → 主力 ASIN，**放大投資**：加廣告預算、擴 keyword、考慮拓品
+- 高流量低轉化 → 流量浪費，**改 listing/價格/評價**：A+ 內容、主圖、Buy Box、coupon
+- 低流量高轉化 → 隱形冠軍，**加流量**：SP/SB 投放、SEO 強化、社群導流
+- 低流量低轉化 → **評估退場 / 競品分析**：看是 listing 問題還是 product/price 沒競爭力，必要時砍 SKU
+"""
+
+
+def _add_quadrant_column(df: pd.DataFrame) -> pd.DataFrame:
+    """加 Quadrant 欄位（依 Sessions / CVR 與中位數比較）。寫回 df。"""
+    if "Sessions - Total" not in df.columns or "Unit Session Percentage" not in df.columns:
+        return df
+    sessions = _to_num(df["Sessions - Total"])
+    cvr = _to_num(df["Unit Session Percentage"])
+    valid = sessions.dropna()
+    valid = valid[valid != 0]
+    cvr_valid = cvr.dropna()
+    cvr_valid = cvr_valid[cvr_valid != 0]
+    if valid.empty or cvr_valid.empty:
+        df["Quadrant"] = "-"
+        return df
+    s_med = valid.median()
+    c_med = cvr_valid.median()
+
+    def _label(row_s, row_c):
+        if pd.isna(row_s) or row_s == 0 or pd.isna(row_c) or row_c == 0:
+            return "-"
+        s_high = row_s > s_med
+        c_high = row_c > c_med
+        if s_high and c_high:
+            return "高流量高轉化"
+        if s_high and not c_high:
+            return "高流量低轉化"
+        if not s_high and c_high:
+            return "低流量高轉化"
+        return "低流量低轉化"
+
+    df["Quadrant"] = [_label(s, c) for s, c in zip(sessions, cvr)]
+    df.attrs["sessions_median"] = float(s_med)
+    df.attrs["cvr_median"] = float(c_med)
+    return df
+
+
+def _quadrant_summary(df: pd.DataFrame) -> str:
+    """產生 4 象限分布摘要（給 prompt 用）。"""
+    if "Quadrant" not in df.columns:
+        return ""
+    counts = df["Quadrant"].value_counts()
+    total = sum(v for k, v in counts.items() if k != "-")
+    if total == 0:
+        return ""
+    lines = ["**ASIN 四象限分布：**"]
+    s_med = df.attrs.get("sessions_median")
+    c_med = df.attrs.get("cvr_median")
+    if s_med is not None and c_med is not None:
+        lines.append(f"（基準：Sessions 中位數 {s_med:.0f}、CVR 中位數 {c_med:.2f}%）")
+    for q in ("高流量高轉化", "高流量低轉化", "低流量高轉化", "低流量低轉化"):
+        n = int(counts.get(q, 0))
+        pct = n / total * 100 if total else 0
+        lines.append(f"- {q}: {n} 支 ({pct:.0f}%)")
+    return "\n".join(lines)
+
+
 def _inventory_risk_lines(slim: pd.DataFrame, max_n: int = 15) -> str:
     if not any(c in slim.columns for c in ("Total Days of Supply", "WOC", "Available")):
         return ""
@@ -933,16 +1050,23 @@ def build_asin_prompt(
     if sales_col:
         df[sales_col] = _to_num(df[sales_col])
 
+    # 加四象限分類
+    df = _add_quadrant_column(df)
+
     cols = [c for c in [
-        "Child ASIN", "Sales Contribution %", "Sessions - Total",
-        "Available", "Total Days of Supply", "WOC",
+        "Child ASIN", "Quadrant", "Sales Contribution %", "Sessions - Total",
+        "Unit Session Percentage", "Available", "Total Days of Supply", "WOC",
     ] if c in df.columns]
     slim = df[cols].copy() if cols else df.copy()
 
     top10 = (slim.sort_values(sales_col, ascending=False).head(10)
              if sales_col and sales_col in slim.columns else slim.head(10))
 
-    sections = [f"**Top 10 by Sales Contribution：**\n{_df_to_markdown(top10)}"]
+    sections = []
+    quad = _quadrant_summary(df)
+    if quad:
+        sections.append(quad)
+    sections.append(f"\n**Top 10 by Sales Contribution（含象限）：**\n{_df_to_markdown(top10)}")
 
     # 標記的 ASIN（tag）
     if asin_marks:
@@ -1009,14 +1133,16 @@ def build_asin_prompt(
     return (
         f"賣家：{seller_name}\n區塊：ASIN Level（Complete + Trend + B2B 整合）\n\n"
         f"{body}\n\n"
+        f"{QUADRANT_SOP}\n"
         "請依序分析：\n"
-        "1. **集中度** — Top 3 ASIN 佔比是否過高？需不需要分散風險？\n"
-        "2. **指定 ASIN（如有 tag）** — 對標記的 ASIN 做 sales funnel 診斷（Sessions → CVR → Sales），找瓶頸\n"
-        "3. **異常診斷** — CVR YoY 大幅變化的 ASIN，原因可能是什麼？該怎麼救？\n"
-        "4. **趨勢** — 近 3 個月 Top ASIN 是否還在成長？有沒有要被超車？\n"
-        "5. **B2B** — 高 B2B% ASIN 是否要做 BD 推廣或加固定價？\n"
-        "6. **庫存風險** — 哪幾支 ASIN 必須立刻補貨？\n"
-        "7. **下一步行動 3 條** — 要做的事按優先度排序"
+        "1. **四象限戰略** — 各象限 ASIN 數量與分布是否健康？依 SOP 給每個象限的處置建議（具體點名 1–2 支代表 ASIN）\n"
+        "2. **集中度** — Top 3 ASIN 佔比是否過高？需不需要分散風險？\n"
+        "3. **指定 ASIN（如有 tag）** — 對標記的 ASIN 做 sales funnel 診斷（Sessions → CVR → Sales），找瓶頸\n"
+        "4. **異常診斷** — CVR YoY 大幅變化的 ASIN，原因可能是什麼？該怎麼救？\n"
+        "5. **趨勢** — 近 3 個月 Top ASIN 是否還在成長？有沒有要被超車？\n"
+        "6. **B2B** — 高 B2B% ASIN 是否要做 BD 推廣或加固定價？\n"
+        "7. **庫存風險** — 哪幾支 ASIN 必須立刻補貨？\n"
+        "8. **下一步行動 3 條** — 要做的事按優先度排序"
     )
 
 
@@ -1040,16 +1166,24 @@ def build_asin_table_prompt(
         if c in df.columns:
             df[c] = _to_num(df[c])
 
+    # 加四象限分類
+    df = _add_quadrant_column(df)
+
     # Funnel 重點欄位
     funnel_cols = [c for c in [
-        "Child ASIN", "Tag", "Sessions - Total", "Unit Session Percentage",
+        "Child ASIN", "Tag", "Quadrant", "Sessions - Total", "Unit Session Percentage",
         "Unit Session % - Last Year", "Ordered Product Sales",
         "Sales Contribution %",
     ] if c in df.columns]
     slim = df[funnel_cols].copy() if funnel_cols else df.copy()
 
-    # 1. 標記 ASIN 全列出
+    # 0. 四象限分布
     sections = []
+    quad = _quadrant_summary(df)
+    if quad:
+        sections.append(quad)
+
+    # 1. 標記 ASIN 全列出
     if asin_marks:
         marked = slim[slim.get("Tag", "") != ""].copy() if "Tag" in slim.columns else pd.DataFrame()
         if not marked.empty:
@@ -1078,10 +1212,12 @@ def build_asin_table_prompt(
     return (
         f"賣家：{seller_name}\n區塊：Complete ASIN Data\n\n"
         f"{body}\n\n"
+        f"{QUADRANT_SOP}\n"
         "請逐項分析：\n"
-        "1. **指定 ASIN 的 Sales Funnel** — 對每支 tag ASIN，分別判斷瓶頸在 (a) Sessions（流量不足）"
-        "(b) CVR（轉換率低）還是 (c) Sales 已 OK，給對症下藥的建議\n"
-        "2. **異常 ASIN** — 例如 CVR YoY 大跌的，可能原因（價格、Buy Box、評價、競品）+ 救法 2 條\n"
-        "3. **Top ASIN 攻擊面** — Top 3 還能怎麼擴大？流量擴張 vs 客單提升\n"
-        "4. **三個下一步行動** — 按優先度排序，每條 1 句話"
+        "1. **四象限戰略** — 各象限分布健康嗎？依 SOP 點名 1–2 支代表 ASIN 給對症處置\n"
+        "2. **指定 ASIN 的 Sales Funnel** — 對每支 tag ASIN，先看落在哪個象限，"
+        "再判斷瓶頸在 (a) Sessions（流量不足） (b) CVR（轉換率低）還是 (c) Sales 已 OK，給對症下藥的建議\n"
+        "3. **異常 ASIN** — 例如 CVR YoY 大跌的，可能原因（價格、Buy Box、評價、競品）+ 救法 2 條\n"
+        "4. **Top ASIN 攻擊面** — Top 3 還能怎麼擴大？流量擴張 vs 客單提升\n"
+        "5. **三個下一步行動** — 按優先度排序，每條 1 句話"
     )
