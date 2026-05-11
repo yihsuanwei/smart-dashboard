@@ -55,11 +55,11 @@ def _bedrock_client():
     return session.client("bedrock-runtime", region_name=REGION)
 
 
-def _invoke(user_prompt: str) -> str:
+def _invoke(user_prompt: str, max_tokens: int = 1024, system: str = SYSTEM_PROMPT) -> str:
     body = {
         "anthropic_version": "bedrock-2023-05-31",
-        "max_tokens": 1024,
-        "system": SYSTEM_PROMPT,
+        "max_tokens": max_tokens,
+        "system": system,
         "messages": [{"role": "user", "content": user_prompt}],
     }
     resp = _bedrock_client().invoke_model(
@@ -68,7 +68,15 @@ def _invoke(user_prompt: str) -> str:
         contentType="application/json",
     )
     payload = json.loads(resp["body"].read())
-    return payload["content"][0]["text"]
+    text = payload["content"][0]["text"]
+    stop_reason = payload.get("stop_reason", "")
+    if stop_reason == "max_tokens":
+        # 讓上層知道被截斷，可以選擇重試或處理
+        raise ValueError(
+            f"回應在 {max_tokens} tokens 處被截斷（stop_reason=max_tokens）。"
+            f"已收到 {len(text)} 字元。"
+        )
+    return text
 
 
 def _df_to_markdown(df: pd.DataFrame, max_rows: int = 20) -> str:
@@ -415,11 +423,11 @@ def build_action_plan_prompt(seller_name: str, insights: list[dict]) -> str:
     body = "\n".join(lines)
     return (
         f"{body}\n\n"
-        "請整合上述所有 insights，輸出一份「執行計畫」。要求：\n"
+        "請整合上述所有 insights，輸出一份**給賣家的**執行計畫（所有 action 都是賣家要做的事）。要求：\n"
         "1. 用 JSON 格式回覆（**只能有 JSON，不要 preamble、不要 markdown code fence**）\n"
         "2. JSON schema：\n"
         '   {"summary": "整體狀況一句話", \n'
-        '    "this_week": [{"action": "...", "why": "...", "owner": "AM/賣家/雙方"}, ...],\n'
+        '    "this_week": [{"action": "...", "why": "..."}, ...],\n'
         '    "this_month": [...],\n'
         '    "this_quarter": [...]}\n'
         "3. 每個 action 要具體可執行（例：「補貨 ASIN B0XXX 至 60 天 TDOS」），不能模糊（例：「優化廣告」）\n"
@@ -427,6 +435,20 @@ def build_action_plan_prompt(seller_name: str, insights: list[dict]) -> str:
         "5. 各層級項目數量：this_week 最多 5 條、this_month 最多 5 條、this_quarter 最多 3 條\n"
         "6. 同樣的事不要重複出現在多個層級"
     )
+
+
+def _parse_plan_json(raw: str) -> dict:
+    """Robust JSON parsing — 剝 markdown fence、清掉 preamble。"""
+    s = raw.strip()
+    # 剝 ```json ... ``` 或 ``` ... ```
+    if s.startswith("```"):
+        s = re.sub(r"^```[a-zA-Z]*\n?", "", s)
+        s = re.sub(r"\n?```\s*$", "", s)
+    # 找第一個 { 開始（萬一 Claude 還是 preamble 了）
+    start = s.find("{")
+    if start > 0:
+        s = s[start:]
+    return json.loads(s)
 
 
 def _render_action_plan_html(seller_name: str, plan_json: dict, generated_at: str) -> str:
@@ -438,11 +460,9 @@ def _render_action_plan_html(seller_name: str, plan_json: dict, generated_at: st
         for it in items:
             action = it.get("action", "")
             why = it.get("why", "")
-            owner = it.get("owner", "")
-            owner_chip = f'<span class="chip">{owner}</span>' if owner else ""
             rows.append(
                 f'<li><label><input type="checkbox"> '
-                f'<span class="action">{action}</span> {owner_chip}'
+                f'<span class="action">{action}</span>'
                 f'<div class="why">{why}</div></label></li>'
             )
         return '<ul class="checklist">' + "".join(rows) + "</ul>"
@@ -452,6 +472,7 @@ def _render_action_plan_html(seller_name: str, plan_json: dict, generated_at: st
     month = _items_html(plan_json.get("this_month", []))
     quarter = _items_html(plan_json.get("this_quarter", []))
 
+    plan_id = f"{_safe_filename(seller_name)}_{generated_at[:10].replace('-','')}"
     return f"""<!DOCTYPE html>
 <html lang="zh-Hant">
 <head>
@@ -464,11 +485,21 @@ def _render_action_plan_html(seller_name: str, plan_json: dict, generated_at: st
 body {{ font-family:"Noto Sans TC",-apple-system,sans-serif; background:var(--bg);
         color:var(--text); line-height:1.6; padding:40px 20px; }}
 main {{ max-width:780px; margin:0 auto; }}
-header {{ border-bottom:3px solid var(--primary); padding-bottom:20px; margin-bottom:30px; }}
+header {{ border-bottom:3px solid var(--primary); padding-bottom:20px; margin-bottom:30px;
+          display:flex; justify-content:space-between; align-items:flex-end; gap:20px; flex-wrap:wrap; }}
 header h1 {{ font-size:1.8em; color:var(--primary); }}
 header .meta {{ color:var(--muted); font-size:0.9em; margin-top:8px; }}
+.actions {{ display:flex; gap:8px; }}
+.actions button {{ background:var(--primary); color:#fff; border:none; border-radius:6px;
+                    padding:8px 14px; cursor:pointer; font-size:0.9em; font-family:inherit; }}
+.actions button.ghost {{ background:#fff; color:var(--primary); border:1px solid var(--primary); }}
+.actions button:hover {{ opacity:0.85; }}
 .summary {{ background:#f7f9fc; border-left:4px solid var(--primary);
             padding:16px 20px; border-radius:6px; margin-bottom:30px; font-size:1.05em; }}
+.progress-bar {{ background:#eef2f7; border-radius:999px; height:8px; margin-bottom:24px; overflow:hidden; }}
+.progress-fill {{ background:linear-gradient(90deg, var(--primary), var(--accent));
+                   height:100%; width:0%; transition:width .3s; }}
+.progress-text {{ font-size:0.85em; color:var(--muted); margin-bottom:24px; }}
 section {{ margin-bottom:32px; }}
 section h2 {{ font-size:1.25em; color:var(--primary); margin-bottom:14px;
               padding-bottom:8px; border-bottom:1px solid var(--border); }}
@@ -481,22 +512,35 @@ section h2 {{ font-size:1.25em; color:var(--primary); margin-bottom:14px;
 .checklist input:checked ~ .action {{ text-decoration:line-through; color:var(--muted); }}
 .action {{ font-weight:500; }}
 .why {{ color:#5a6270; font-size:0.9em; margin-top:6px; margin-left:24px; }}
-.chip {{ display:inline-block; background:var(--accent); color:#fff;
-         font-size:0.75em; padding:2px 8px; border-radius:10px; margin-left:6px; }}
 .empty {{ color:var(--muted); font-style:italic; padding:8px 0; }}
-footer {{ margin-top:40px; padding-top:20px; border-top:1px solid var(--border);
-          color:var(--muted); font-size:0.85em; text-align:center; }}
-@media print {{ body {{ padding:20px; }} .checklist li:hover {{ border-color:var(--border); }} }}
+.toast {{ position:fixed; bottom:24px; left:50%; transform:translateX(-50%);
+          background:#28a745; color:#fff; padding:10px 20px; border-radius:6px;
+          font-size:0.9em; opacity:0; transition:opacity .3s; pointer-events:none; }}
+.toast.show {{ opacity:1; }}
+@media print {{
+  body {{ padding:20px; }}
+  .checklist li:hover {{ border-color:var(--border); }}
+  .actions {{ display:none; }}
+}}
 </style>
 </head>
-<body>
+<body data-plan-id="{plan_id}">
 <main>
 <header>
-<h1>執行計畫 — {seller_name}</h1>
-<div class="meta">產生時間：{generated_at}　·　Powered by Claude Opus 4.7 on Bedrock</div>
+  <div>
+    <h1>執行計畫 — {seller_name}</h1>
+    <div class="meta">產生時間：{generated_at}</div>
+  </div>
+  <div class="actions">
+    <button class="ghost" onclick="window.print()">列印 / 存 PDF</button>
+    <button onclick="exportProgress()">匯出進度檔</button>
+  </div>
 </header>
 
 <div class="summary">{summary}</div>
+
+<div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+<div class="progress-text" id="progressText">0 / 0 已完成</div>
 
 <section>
 <h2>本週要做（this week）</h2>
@@ -512,61 +556,246 @@ footer {{ margin-top:40px; padding-top:20px; border-top:1px solid var(--border);
 <h2>本季方向（this quarter）</h2>
 {quarter}
 </section>
-
-<footer>勾選完成項目可以保存進度（瀏覽器記憶）。建議列印或另存 PDF 給賣家。</footer>
 </main>
+
+<div class="toast" id="toast">已儲存到本機</div>
+
+<script>
+const PLAN_ID = document.body.dataset.planId;
+const STORAGE_KEY = 'plan_' + PLAN_ID;
+
+function actionKey(li, idx) {{
+  // 用 action 文字 hash 當 key（即使重排也能對應）
+  const text = li.querySelector('.action')?.textContent.trim() || ('idx_' + idx);
+  return text.slice(0, 100);
+}}
+
+function loadProgress() {{
+  const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{{}}');
+  document.querySelectorAll('.checklist li').forEach((li, idx) => {{
+    const key = actionKey(li, idx);
+    const cb = li.querySelector('input[type=checkbox]');
+    if (saved[key]) cb.checked = true;
+  }});
+  updateProgress();
+}}
+
+function saveProgress() {{
+  const state = {{}};
+  document.querySelectorAll('.checklist li').forEach((li, idx) => {{
+    const key = actionKey(li, idx);
+    const cb = li.querySelector('input[type=checkbox]');
+    if (cb.checked) state[key] = true;
+  }});
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  showToast('進度已儲存到瀏覽器');
+  updateProgress();
+}}
+
+function updateProgress() {{
+  const all = document.querySelectorAll('.checklist input[type=checkbox]');
+  const done = document.querySelectorAll('.checklist input[type=checkbox]:checked');
+  const pct = all.length === 0 ? 0 : (done.length / all.length * 100);
+  document.getElementById('progressFill').style.width = pct + '%';
+  document.getElementById('progressText').textContent =
+    done.length + ' / ' + all.length + ' 已完成（' + pct.toFixed(0) + '%）';
+}}
+
+function exportProgress() {{
+  // 把當前勾選狀態烙進 HTML 再下載一份
+  const clone = document.documentElement.cloneNode(true);
+  clone.querySelectorAll('.checklist input[type=checkbox]').forEach(cb => {{
+    if (cb.checked) cb.setAttribute('checked', 'checked');
+    else cb.removeAttribute('checked');
+  }});
+  // 加一個「最後更新」標記
+  const meta = clone.querySelector('header .meta');
+  if (meta) meta.textContent += '　·　最後勾選：' + new Date().toLocaleString('zh-TW');
+  const html = '<!DOCTYPE html>\\n' + clone.outerHTML;
+  const blob = new Blob([html], {{type: 'text/html;charset=utf-8'}});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  const ts = new Date().toISOString().slice(0,10).replace(/-/g,'');
+  a.download = PLAN_ID + '_progress_' + ts + '.html';
+  a.click();
+  URL.revokeObjectURL(a.href);
+}}
+
+function showToast(msg) {{
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 2000);
+}}
+
+// 勾選自動存
+document.addEventListener('change', e => {{
+  if (e.target.matches('.checklist input[type=checkbox]')) saveProgress();
+}});
+loadProgress();
+</script>
 </body>
 </html>"""
 
 
-def render_export_action_plan(seller_name: str) -> None:
-    """頁面頂部按鈕：合併所有 insights → Claude 整合 → 產 HTML 下載。"""
+BULK_RUN_FLAG = "_ai_bulk_run_pending"
+BULK_DONE_FLAG = "_ai_bulk_run_done"
+
+# 所有 section keys — 一鍵生成會 loop 這些
+ALL_SECTIONS = ["overall", "business_metrics", "asin_table", "asin_level",
+                "annual_target", "advertising"]
+
+
+def is_bulk_pending() -> bool:
+    """各 section 在自己的 AI 觸發點 call 這個，True 就跑。"""
+    return st.session_state.get(BULK_RUN_FLAG, False)
+
+
+def clear_bulk_flag() -> None:
+    """頁面最後 call — 清掉 pending flag、設 done flag（觸發 toast 提示）。"""
+    if st.session_state.pop(BULK_RUN_FLAG, False):
+        st.session_state[BULK_DONE_FLAG] = True
+
+
+def render_ai_tool_popover(seller_name: str) -> None:
+    """頁面頂部 popover — AI Tool（取代原本的 export button）。"""
     if not seller_name:
         return
-    insights = _load_saved(seller_name)
-    if not insights:
-        st.caption(f":material/info: 還沒有儲存的 AI Insight，先到下方各區塊按「AI 分析」+ 儲存後再來匯出。")
-        return
 
+    insights = _load_saved(seller_name)
+    plans_dir = INSIGHTS_DIR / "plans"
+    seller_safe = _safe_filename(seller_name)
+    saved_plans = sorted(plans_dir.glob(f"*_{seller_safe}_action_plan.html"), reverse=True) \
+        if plans_dir.exists() else []
+
+    with st.popover("AI Tool", icon=":material/auto_awesome:"):
+        # 動作：一鍵生成
+        if st.button(
+            "一鍵生成所有 Insight",
+            key=f"bulk_run_{seller_name}",
+            icon=":material/bolt:",
+            use_container_width=True,
+        ):
+            st.session_state[BULK_RUN_FLAG] = True
+            st.session_state[BULK_DONE_FLAG] = False
+            for sec in ALL_SECTIONS:
+                st.session_state.pop(f"ai_insight_{sec}", None)
+            st.rerun()
+
+        # 動作：匯出執行計畫
+        _render_export_plan_inner(seller_name, insights)
+
+        # 歷史計畫（收進 expander，預設關）
+        if saved_plans:
+            with st.expander(
+                f"已儲存的計畫（{len(saved_plans)}）",
+                icon=":material/folder_open:",
+            ):
+                for p in saved_plans:
+                    cols = st.columns([5, 1, 1], vertical_alignment="center")
+                    cols[0].caption(p.name)
+                    cols[1].download_button(
+                        label="",
+                        data=p.read_bytes(),
+                        file_name=p.name,
+                        mime="text/html",
+                        icon=":material/download:",
+                        key=f"dl_saved_{p.name}",
+                        type="tertiary",
+                    )
+                    if cols[2].button(
+                        "",
+                        icon=":material/delete:",
+                        type="tertiary",
+                        key=f"del_saved_{p.name}",
+                    ):
+                        p.unlink()
+                        st.rerun()
+
+    if st.session_state.pop(BULK_DONE_FLAG, False):
+        st.toast("所有 AI Insight 生成完成", icon=":material/check_circle:")
+
+
+def _render_export_plan_inner(seller_name: str, insights: list) -> None:
+    """匯出 plan 的核心邏輯 — popover 內呼叫。"""
     state_key = f"action_plan_{seller_name}"
 
+    btn_label = "匯出執行計畫" if not insights else f"匯出執行計畫（{len(insights)} 筆）"
+    btn_disabled = not insights
     if st.button(
-        f"匯出執行計畫（{len(insights)} 筆 insight）",
+        btn_label,
         key=f"export_plan_{seller_name}",
-        type="secondary",
         icon=":material/checklist:",
+        use_container_width=True,
+        disabled=btn_disabled,
+        help="先到各區塊按 AI 分析 + 儲存後才能匯出" if btn_disabled else None,
     ):
+        raw = ""
         try:
-            with st.spinner("整合中…Claude 正在排序執行計畫"):
+            with st.spinner("整合中…Claude 正在排序執行計畫（最多 60 秒）"):
                 prompt = build_action_plan_prompt(seller_name, insights)
-                raw = _invoke(prompt)
-            # Claude 偶爾還是會加 ```json 包起來，簡單剝掉
-            cleaned = raw.strip()
-            if cleaned.startswith("```"):
-                cleaned = re.sub(r"^```[a-zA-Z]*\n?", "", cleaned)
-                cleaned = re.sub(r"\n?```$", "", cleaned)
-            plan = json.loads(cleaned)
+                # JSON-only 系統提示 + 8000 token 預算（足以塞完整 plan）
+                raw = _invoke(
+                    prompt,
+                    max_tokens=8000,
+                    system="You return ONLY valid JSON. No markdown code fence, no preamble, no explanation. Just JSON.",
+                )
+            plan = _parse_plan_json(raw)
             generated_at = datetime.now().strftime("%Y-%m-%d %H:%M")
             html = _render_action_plan_html(seller_name, plan, generated_at)
             st.session_state[state_key] = {"html": html, "generated_at": generated_at}
         except json.JSONDecodeError as e:
-            st.error(f"AI 回覆不是合法 JSON，無法產出 HTML：{e}\n\n原始回覆：\n{raw[:500]}")
+            st.error(
+                f"AI 回覆 JSON 格式錯誤：{e}\n\n"
+                f"前 800 字：\n```\n{raw[:800]}\n```\n"
+                f"後 300 字：\n```\n{raw[-300:]}\n```"
+            )
+        except ValueError as e:
+            # 被 max_tokens 截斷
+            st.error(
+                f"回應太長被截斷：{e}\n\n"
+                f"建議：刪掉幾筆舊 insight 再重試，或聯絡開發者調高 token 上限。"
+            )
         except Exception as e:
             if _is_credential_exception(e):
                 st.error("AWS 憑證過期，請到下方按一次任意 AI 分析觸發 mwinit 後再試。")
             else:
-                st.error(f"匯出失敗：{e}")
+                st.error(f"匯出失敗：{type(e).__name__}: {e}")
 
     if state_key in st.session_state:
         cached = st.session_state[state_key]
-        st.download_button(
-            label=f"下載 HTML（{cached['generated_at']}）",
-            data=cached["html"].encode("utf-8"),
-            file_name=f"action_plan_{_safe_filename(seller_name)}_{cached['generated_at'].replace(':','').replace(' ','_').replace('-','')}.html",
-            mime="text/html",
-            icon=":material/download:",
-            key=f"dl_plan_{seller_name}",
-        )
+        # 檔名：YYYYMMDD_{seller}_action_plan.html
+        date_part = cached["generated_at"][:10].replace("-", "")  # 2026-05-11 → 20260511
+        filename = f"{date_part}_{_safe_filename(seller_name)}_action_plan.html"
+
+        col_dl, col_save = st.columns(2)
+        with col_dl:
+            st.download_button(
+                label="下載 HTML",
+                data=cached["html"].encode("utf-8"),
+                file_name=filename,
+                mime="text/html",
+                icon=":material/download:",
+                key=f"dl_plan_{seller_name}",
+                use_container_width=True,
+            )
+        with col_save:
+            saved_flag = f"plan_saved_{seller_name}"
+            if st.button(
+                "儲存到本機",
+                icon=":material/save:",
+                key=f"save_plan_{seller_name}",
+                use_container_width=True,
+            ):
+                plans_dir = INSIGHTS_DIR / "plans"
+                plans_dir.mkdir(parents=True, exist_ok=True)
+                save_path = plans_dir / filename
+                save_path.write_text(cached["html"], encoding="utf-8")
+                st.session_state[saved_flag] = str(save_path)
+                st.rerun()
+            if st.session_state.pop(saved_flag, None):
+                st.toast(f"已儲存到 ai_insights/plans/{filename}",
+                         icon=":material/check_circle:")
 
 
 def build_ads_prompt(

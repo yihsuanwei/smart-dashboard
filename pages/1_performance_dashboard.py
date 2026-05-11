@@ -471,8 +471,10 @@ if seller_list:
         seller_options_display.append(display_name)
         seller_options_map[display_name] = (seller_key, mcid)
 
-    # 賣家下拉 + MCID + 匯出執行計畫 同一行
-    sel_col, mcid_col, export_col = st.columns([1, 1, 2], vertical_alignment="center")
+    # 賣家下拉 + MCID + AI Tool 同一行（AI Tool 推到最右邊）
+    sel_col, mcid_col, _spacer, export_col = st.columns(
+        [1, 1, 1, 1], vertical_alignment="center"
+    )
     with sel_col:
         selected_seller_label = st.selectbox(
             "選擇客戶",
@@ -495,7 +497,7 @@ if seller_list:
             st.markdown(f"<div style='line-height:38px;padding-top:4px;color:#333;font-size:16px;font-weight:500;'>MCID: {current_mcid}</div>", unsafe_allow_html=True)
 
     with export_col:
-        ai_insight.render_export_action_plan(current_seller_key or "")
+        ai_insight.render_ai_tool_popover(current_seller_key or "")
 
     st.markdown("<div style='margin-bottom:24px'></div>", unsafe_allow_html=True)
 
@@ -783,7 +785,7 @@ if "Sales Traffic Report" in loaded_data:
             ai_kpi_rows = []
 
     # AI Insight：按了按鈕才呼叫
-    if overall_ai_clicked and ai_kpi_rows:
+    if (overall_ai_clicked or ai_insight.is_bulk_pending()) and ai_kpi_rows:
         prompt = ai_insight.build_overall_prompt(
             seller_name=current_seller_key or "未知賣家",
             year=selected_ytd_year,
@@ -1839,7 +1841,7 @@ if "Sales Traffic Report" in loaded_data:
                             st.caption(f"Last saved: {last_modified}")
 
                     # AI 目標建議
-                    if target_ai_clicked:
+                    if target_ai_clicked or ai_insight.is_bulk_pending():
                         prompt = ai_insight.build_target_prompt(
                             seller_name=current_seller_key or "未知賣家",
                             this_year=this_year,
@@ -2014,7 +2016,7 @@ if "Sales Traffic Report" in loaded_data:
                     })
 
         # AI Insight
-        if bm_ai_clicked and bm_rows:
+        if (bm_ai_clicked or ai_insight.is_bulk_pending()) and bm_rows:
             prompt = ai_insight.build_business_metrics_prompt(
                 seller_name=current_seller_key or "未知賣家",
                 selected_date=selected_date,
@@ -2184,7 +2186,7 @@ if "Asin Report" in loaded_data:
 
     asin_df = loaded_data["Asin Report"]
 
-    if asin_ai_clicked:
+    if asin_ai_clicked or ai_insight.is_bulk_pending():
         prompt = ai_insight.build_asin_prompt(
             seller_name=current_seller_key or "未知賣家",
             asin_df=asin_df,
@@ -3039,7 +3041,7 @@ if "Asin Report" in loaded_data:
                 st.dataframe(styled_df, use_container_width=True)
 
                 # AI 分析按鈕觸發 — 用 display_df（已經含 Tag 欄）
-                if asin_table_ai_clicked:
+                if asin_table_ai_clicked or ai_insight.is_bulk_pending():
                     prompt = ai_insight.build_asin_table_prompt(
                         seller_name=current_seller_key or "未知賣家",
                         table_df=asin_df,
@@ -3491,7 +3493,7 @@ if "P0 MCID MBR" in loaded_data:
         render_kpi_widget("SP ops", round(sp_ops_value) if isinstance(sp_ops_value, (int, float)) else sp_ops_value, sp_ops_yoy, sp_ops_mom, prefix="$")
 
     # AI 分析：只用 widget 上面的三個 KPI
-    if ads_ai_clicked:
+    if ads_ai_clicked or ai_insight.is_bulk_pending():
         ads_kpi_rows = [
             {'name': 'TACOS', 'value': round(tacos_value, 2) if tacos_value > 0 else 0,
              'yoy_pct': tacos_yoy, 'mom_pct': tacos_mom, 'decimal': True},
@@ -3785,4 +3787,7 @@ if "P0 MCID MBR" in loaded_data:
             )
             percentage = (value / total_gms * 100) if total_gms > 0 else 0
             render_kpi_widget_with_percentage(metric['title'], value, percentage, yoy, mom)
+
+# bulk run flag 在所有區塊都跑完後清掉，避免下次 rerun 又無限循環
+ai_insight.clear_bulk_flag()
 
