@@ -471,8 +471,8 @@ if seller_list:
         seller_options_display.append(display_name)
         seller_options_map[display_name] = (seller_key, mcid)
 
-    # 賣家下拉 + MCID 同一行
-    sel_col, mcid_col, _ = st.columns([1, 1, 2])
+    # 賣家下拉 + MCID + 匯出執行計畫 同一行
+    sel_col, mcid_col, export_col = st.columns([1, 1, 2], vertical_alignment="center")
     with sel_col:
         selected_seller_label = st.selectbox(
             "選擇客戶",
@@ -493,6 +493,9 @@ if seller_list:
     with mcid_col:
         if current_mcid:
             st.markdown(f"<div style='line-height:38px;padding-top:4px;color:#333;font-size:16px;font-weight:500;'>MCID: {current_mcid}</div>", unsafe_allow_html=True)
+
+    with export_col:
+        ai_insight.render_export_action_plan(current_seller_key or "")
 
     st.markdown("<div style='margin-bottom:24px'></div>", unsafe_allow_html=True)
 
@@ -562,13 +565,10 @@ else:
 
 # Overall Sales Summary 區塊（從 Sales Traffic Report 動態計算）
 if "Sales Traffic Report" in loaded_data:
-    # 標題、AI 按鈕、年份選擇器並排
-    header_col, ai_col, year_select_col = st.columns([2.5, 1, 1])
+    # 標題 + AI 緊貼，年份選擇器靠右
+    header_col, year_select_col = st.columns([3, 1], vertical_alignment="bottom")
     with header_col:
-        st.header("Overall Sales Summary")
-    with ai_col:
-        st.markdown("<div style='margin-top: 22px;'></div>", unsafe_allow_html=True)
-        overall_ai_clicked = ai_insight.ai_button("overall")
+        overall_ai_clicked = ai_insight.header_with_ai("Overall Sales Summary", "overall")
 
     # 從 Sales Traffic Report 取得可用年份
     available_years = []
@@ -588,7 +588,6 @@ if "Sales Traffic Report" in loaded_data:
         available_years = [current_year, current_year - 1]
 
     with year_select_col:
-        st.markdown("<div style='margin-top: 15px;'></div>", unsafe_allow_html=True)
         selected_ytd_year = st.selectbox(
             "選擇年份",
             options=available_years,
@@ -791,7 +790,7 @@ if "Sales Traffic Report" in loaded_data:
             kpi_rows=ai_kpi_rows,
         )
         ai_insight.show_result("overall", prompt)
-    ai_insight.show_cached("overall")
+    ai_insight.show_cached("overall", seller_name=current_seller_key or "")
 
     # 增加 KPI widgets 與下方元素的間距
     st.markdown("<div style='margin-bottom: 40px;'></div>", unsafe_allow_html=True)
@@ -1658,6 +1657,11 @@ if "Sales Traffic Report" in loaded_data:
                     # 全年 YoY 目標輸入 + 可編輯的月度 YoY
                     st.markdown("---")
 
+                    # 區塊 header + AI 按鈕
+                    target_ai_clicked = ai_insight.header_with_ai(
+                        "年度目標設定", "annual_target", level="subheader"
+                    )
+
                     # 全年目標 + 旺季月份輸入
                     col_input, col_peak, col_spacer = st.columns([1, 1.5, 3.5])
                     
@@ -1833,6 +1837,20 @@ if "Sales Traffic Report" in loaded_data:
                         last_modified = all_targets[current_file_key][str(this_year)].get('modified_at')
                         if last_modified:
                             st.caption(f"Last saved: {last_modified}")
+
+                    # AI 目標建議
+                    if target_ai_clicked:
+                        prompt = ai_insight.build_target_prompt(
+                            seller_name=current_seller_key or "未知賣家",
+                            this_year=this_year,
+                            last_year_sales=last_year_sales,
+                            this_year_sales=this_year_sales,
+                            last_year_yoy=last_year_yoy,
+                            current_target_yoy=annual_yoy_target,
+                            current_peak_months_str=peak_months_str,
+                        )
+                        ai_insight.show_result("annual_target", prompt)
+                    ai_insight.show_cached("annual_target", seller_name=current_seller_key or "")
                 else:
                     st.info("需要至少兩年的資料才能設定目標")
 
@@ -1843,12 +1861,7 @@ if "Sales Traffic Report" in loaded_data:
 
 # Business Metrics 區塊
 if "Sales Traffic Report" in loaded_data:
-    bm_header_col, bm_ai_col = st.columns([4, 1])
-    with bm_header_col:
-        st.header(":material/bar_chart: Business Metrics")
-    with bm_ai_col:
-        st.markdown("<div style='margin-top: 22px;'></div>", unsafe_allow_html=True)
-        bm_ai_clicked = ai_insight.ai_button("business_metrics")
+    st.header(":material/bar_chart: Business Metrics")
 
     sales_df = loaded_data["Sales Traffic Report"]
 
@@ -1924,8 +1937,10 @@ if "Sales Traffic Report" in loaded_data:
         filtered_sales_df = sales_df[mask]
 
         if not filtered_sales_df.empty:
-            # Sales Widget
-            st.subheader(f"{selected_date}")
+            # Sales Widget — subheader 旁邊放 AI 按鈕
+            bm_ai_clicked = ai_insight.header_with_ai(
+                f"{selected_date}", "business_metrics", level="subheader"
+            )
 
             # 創建 widget 欄位
             metric_col1, metric_col2, metric_col3 = st.columns(3)
@@ -1969,9 +1984,8 @@ if "Sales Traffic Report" in loaded_data:
                 }
             ]
 
-            # 批量渲染業務指標 + 同步收集 AI 用的當期/前期數值
-            bm_current = {}
-            bm_prior = {}
+            # 批量渲染業務指標 + 同步收集 AI 用的當期值/yoy/mom
+            bm_rows = []
             for metric in business_metrics:
                 with metric['column']:
                     render_business_metric_widget(sales_df, date_col, original_date, metric)
@@ -1985,26 +1999,29 @@ if "Sales Traffic Report" in loaded_data:
                 if metric_col is None:
                     continue
 
-                cur_val, _, mom_change = calculate_metric_yoy_mom(
+                cur_val, yoy, mom = calculate_metric_yoy_mom(
                     sales_df, date_col, metric_col, original_date,
                     cvr_mode=metric.get('cvr_mode', False),
                 )
                 if isinstance(cur_val, (int, float)):
-                    bm_current[metric['title']] = float(cur_val)
-                    if mom_change is not None and not metric.get('cvr_mode', False) and mom_change != 0:
-                        # 反推前期值（避免再 query 一次）
-                        bm_prior[metric['title']] = float(cur_val) / (1 + mom_change / 100)
+                    bm_rows.append({
+                        'name': metric['title'],
+                        'value': float(cur_val),
+                        'yoy_pct': yoy,
+                        'mom_pct': mom,
+                        'is_bps': metric.get('cvr_mode', False),
+                        'decimal': metric.get('decimal_mode', False) or metric.get('cvr_mode', False),
+                    })
 
         # AI Insight
-        if bm_ai_clicked and bm_current:
+        if bm_ai_clicked and bm_rows:
             prompt = ai_insight.build_business_metrics_prompt(
                 seller_name=current_seller_key or "未知賣家",
                 selected_date=selected_date,
-                current_metrics=bm_current,
-                prior_metrics=bm_prior,
+                rows=bm_rows,
             )
             ai_insight.show_result("business_metrics", prompt)
-        ai_insight.show_cached("business_metrics")
+        ai_insight.show_cached("business_metrics", seller_name=current_seller_key or "")
 
         # 在 L819 之後添加圖表區塊
         st.markdown("---")
@@ -2161,12 +2178,9 @@ if "Sales Traffic Report" in loaded_data:
 # ASIN Level 區塊
 if "Asin Report" in loaded_data:
     st.markdown("---")
-    asin_header_col, asin_ai_col = st.columns([4, 1])
-    with asin_header_col:
-        st.header(":material/inventory_2: ASIN Level")
-    with asin_ai_col:
-        st.markdown("<div style='margin-top: 22px;'></div>", unsafe_allow_html=True)
-        asin_ai_clicked = ai_insight.ai_button("asin_level")
+    asin_ai_clicked = ai_insight.header_with_ai(
+        "ASIN Level", "asin_level", icon=":material/inventory_2:"
+    )
 
     asin_df = loaded_data["Asin Report"]
 
@@ -2174,9 +2188,11 @@ if "Asin Report" in loaded_data:
         prompt = ai_insight.build_asin_prompt(
             seller_name=current_seller_key or "未知賣家",
             asin_df=asin_df,
+            trend_df=loaded_data.get("ASIN Trend (YTD)"),
+            asin_marks=st.session_state.get("asin_marks"),
         )
         ai_insight.show_result("asin_level", prompt)
-    ai_insight.show_cached("asin_level")
+    ai_insight.show_cached("asin_level", seller_name=current_seller_key or "")
 
     # 創建三個分頁（使用自訂 CSS 增加字體大小）
     st.markdown("""
@@ -2483,18 +2499,37 @@ if "Asin Report" in loaded_data:
                 else:
                     chart_data = top_10
 
-                # 創建圓餅圖
+                # 主題配色：藍灰主色 → 橘色 accent，「其他」用淺灰
+                pie_colors = [
+                    '#4E79A7', '#6B92BC', '#88ABCF', '#A8C4DD',  # 藍灰主色漸層
+                    '#F28E2B', '#F4A65C', '#F7BE85',             # 橘色 accent
+                    '#76B7B2', '#59A14F', '#EDC948',             # 補色（綠青/黃）
+                    '#BAB0AC',                                    # 灰色（其他）
+                ]
+                colors_for_chart = pie_colors[: len(chart_data)]
+                if '其他' in list(chart_data['Child ASIN']):
+                    others_idx = list(chart_data['Child ASIN']).index('其他')
+                    colors_for_chart[others_idx] = '#BAB0AC'
+
                 fig = go.Figure(data=[go.Pie(
                     labels=chart_data['Child ASIN'],
                     values=chart_data['Sales Contribution %'],
-                    hole=0.3,  # 甜甜圈圖效果
-                    textposition='auto',
+                    hole=0.55,  # 甜甜圈，視覺更現代
+                    textposition='outside',
                     textinfo='label+percent',
-                    hovertemplate='<b>%{label}</b><br>貢獻度: %{value}%<br>佔比: %{percent}<extra></extra>'
+                    marker=dict(
+                        colors=colors_for_chart,
+                        line=dict(color='#FFFFFF', width=2),
+                    ),
+                    pull=[0.04 if i == 0 else 0 for i in range(len(chart_data))],
+                    hovertemplate='<b>%{label}</b><br>貢獻度: %{value:.2f}%<br>佔比: %{percent}<extra></extra>'
                 )])
 
                 fig.update_layout(
-                    title="各 ASIN 銷售貢獻百分比",
+                    title=dict(
+                        text="各 ASIN 銷售貢獻百分比",
+                        font=dict(size=16, color='#31333F'),
+                    ),
                     height=500,
                     showlegend=True,
                     legend=dict(
@@ -2502,8 +2537,12 @@ if "Asin Report" in loaded_data:
                         yanchor="middle",
                         y=0.5,
                         xanchor="left",
-                        x=1.05
-                    )
+                        x=1.05,
+                        font=dict(size=12),
+                    ),
+                    paper_bgcolor='rgba(0,0,0,0)',
+                    plot_bgcolor='rgba(0,0,0,0)',
+                    margin=dict(t=60, b=30, l=20, r=20),
                 )
 
                 st.plotly_chart(fig, use_container_width=True)
@@ -2516,7 +2555,9 @@ if "Asin Report" in loaded_data:
 
                 # 顯示完整的資料表格
                 st.markdown("---")
-                st.markdown("**完整 ASIN 資料:**")
+                asin_table_ai_clicked = ai_insight.header_with_ai(
+                    "完整 ASIN 資料", "asin_table", level="subheader"
+                )
 
                 # === ASIN 標記工具 (MVP) ===
                 import json
@@ -2996,6 +3037,16 @@ if "Asin Report" in loaded_data:
                 styled_df = styled_df.applymap(highlight_woc, subset=["WOC"])
 
                 st.dataframe(styled_df, use_container_width=True)
+
+                # AI 分析按鈕觸發 — 用 display_df（已經含 Tag 欄）
+                if asin_table_ai_clicked:
+                    prompt = ai_insight.build_asin_table_prompt(
+                        seller_name=current_seller_key or "未知賣家",
+                        table_df=asin_df,
+                        asin_marks=st.session_state.get("asin_marks"),
+                    )
+                    ai_insight.show_result("asin_table", prompt)
+                ai_insight.show_cached("asin_table", seller_name=current_seller_key or "")
             else:
                 st.warning("無可用的 Sales Contribution % 資料")
         else:
@@ -3203,7 +3254,9 @@ if "Asin Report" in loaded_data:
 # Advertising & Merchandising 區塊
 if "P0 MCID MBR" in loaded_data:
     st.markdown("---")
-    st.header(":material/campaign: Advertising & Merchandising")
+    ads_ai_clicked = ai_insight.header_with_ai(
+        "Advertising & Merchandising", "advertising", icon=":material/campaign:"
+    )
 
     ads_df = loaded_data["P0 MCID MBR"]
 
@@ -3436,6 +3489,24 @@ if "P0 MCID MBR" in loaded_data:
             cid_filtered_df, 'mtd_sa_attributed_ops_usd', selected_year, selected_month
         )
         render_kpi_widget("SP ops", round(sp_ops_value) if isinstance(sp_ops_value, (int, float)) else sp_ops_value, sp_ops_yoy, sp_ops_mom, prefix="$")
+
+    # AI 分析：只用 widget 上面的三個 KPI
+    if ads_ai_clicked:
+        ads_kpi_rows = [
+            {'name': 'TACOS', 'value': round(tacos_value, 2) if tacos_value > 0 else 0,
+             'yoy_pct': tacos_yoy, 'mom_pct': tacos_mom, 'decimal': True},
+            {'name': 'Ads spending', 'value': ads_spending_value,
+             'yoy_pct': ads_spending_yoy, 'mom_pct': ads_spending_mom},
+            {'name': 'SP ops', 'value': sp_ops_value,
+             'yoy_pct': sp_ops_yoy, 'mom_pct': sp_ops_mom},
+        ]
+        prompt = ai_insight.build_ads_prompt(
+            seller_name=current_seller_key or "未知賣家",
+            selected_period=f"{selected_year}-{selected_month:02d}",
+            kpi_rows=ads_kpi_rows,
+        )
+        ai_insight.show_result("advertising", prompt)
+    ai_insight.show_cached("advertising", seller_name=current_seller_key or "")
 
     # TACOS 折線圖 (2024 vs 2025)
     with st.container():
