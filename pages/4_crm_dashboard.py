@@ -4,6 +4,7 @@
 ivory-cli 每週 sync-pkey 後，這裡馬上看到最新數據。
 """
 
+import os
 import streamlit as st
 import pandas as pd
 import sqlite3
@@ -12,8 +13,42 @@ import plotly.express as px
 import plotly.graph_objects as go
 from pathlib import Path
 
-# ivory-cli 的資料庫路徑（絕對路徑，不依賴相對位置計算）
-DB_PATH = Path.home() / "Documents" / "Work" / "Tools" / "ivory-cli" / "data" / "crm.db"
+
+def _resolve_db_path() -> Path:
+    """找 ivory-cli/data/crm.db。優先順序：
+    1. 環境變數 IVORY_CLI_DB（直接指 .db 或指 ivory-cli 資料夾）
+    2. Documents 下的常見位置
+    3. 從本檔案往上 6 層每層找 ivory-cli/data/crm.db
+    """
+    env = os.environ.get("IVORY_CLI_DB")
+    if env:
+        p = Path(env).expanduser()
+        if p.is_dir():
+            p = p / "data" / "crm.db"
+        if p.exists():
+            return p
+
+    home = Path.home()
+    for cand in [
+        home / "Documents" / "Work" / "ivory-cli" / "data" / "crm.db",
+        home / "Documents" / "Work" / "Tools" / "ivory-cli" / "data" / "crm.db",
+        home / "Documents" / "ivory-cli" / "data" / "crm.db",
+    ]:
+        if cand.exists():
+            return cand
+
+    here = Path(__file__).resolve()
+    for ancestor in [here.parent] + list(here.parents):
+        cand = ancestor / "ivory-cli" / "data" / "crm.db"
+        if cand.exists():
+            return cand
+    return home / "Documents" / "Work" / "ivory-cli" / "data" / "crm.db"
+
+
+DB_PATH = _resolve_db_path()
+
+# UI feature flag：要回退到舊 UI 改成 False 即可（不用 git revert）
+USE_NEW_UI = False
 
 # MM tier 預設值（Dashboard 預設篩選這些）
 MM_TIERS_DEFAULT = ["ignite-y4+", "ignite-y2y3", "mass"]
@@ -78,9 +113,16 @@ def _load_week_list():
     return df
 
 
+_PERF_WEEK_COLS = (
+    "mcid,year,week,marketplace,gms,ytd_gms,ba,fba_ba,new_fba_ba,"
+    "fba_awas,ads_spend,ads_ops,promo_count,promo_ops"
+)
+
+
 @st.cache_data(ttl=120)
 def load_performance_weeks(year_week_pairs: tuple):
-    """只載入指定的 (year, week) 組合，避免全表掃描"""
+    """只載入指定的 (year, week) 組合，避免全表掃描。
+    僅取 dashboard 實際使用的 14 欄，省 IO ~30%。"""
     conn = get_db_connection()
     if conn is None:
         return pd.DataFrame()
@@ -90,7 +132,7 @@ def load_performance_weeks(year_week_pairs: tuple):
     conditions = " OR ".join(
         [f"(year={y} AND week={w})" for y, w in year_week_pairs]
     )
-    df = pd.read_sql(f"SELECT * FROM performance_data WHERE {conditions}", conn)
+    df = pd.read_sql(f"SELECT {_PERF_WEEK_COLS} FROM performance_data WHERE {conditions}", conn)
     conn.close()
     return df
 
@@ -109,9 +151,15 @@ def _load_month_list():
     return df
 
 
+_PERF_MONTH_COLS = (
+    "mcid,year,month,marketplace,gms,ytd_gms,ba,fba_ba,new_fba_ba,"
+    "fba_awas,ads_spend,ads_ops,promo_count,promo_ops"
+)
+
+
 @st.cache_data(ttl=120)
 def load_performance_months(year_month_pairs: tuple):
-    """只載入指定的 (year, month) 組合"""
+    """只載入指定的 (year, month) 組合。僅取 dashboard 實際使用的欄位。"""
     conn = get_db_connection()
     if conn is None:
         return pd.DataFrame()
@@ -121,7 +169,7 @@ def load_performance_months(year_month_pairs: tuple):
     conditions = " OR ".join(
         [f"(year={y} AND month={m})" for y, m in year_month_pairs]
     )
-    df = pd.read_sql(f"SELECT * FROM performance_monthly WHERE {conditions}", conn)
+    df = pd.read_sql(f"SELECT {_PERF_MONTH_COLS} FROM performance_monthly WHERE {conditions}", conn)
     conn.close()
     return df
 
@@ -198,6 +246,65 @@ def _color_pct(val):
     if val is None or pd.isna(val):
         return "color: gray"
     return "color: #2e7d32" if val >= 0 else "color: #c62828"
+
+
+def build_contribution(curr_s: pd.Series, base_s: pd.Series) -> pd.DataFrame:
+    """以 mcid 為 index 的兩個 Series → DataFrame[curr, base, delta, delta_pct, contrib_pct]
+
+    contrib_pct = seller delta ÷ group total delta × 100
+    （正值 = 貢獻同向變動；負值 = 反向，例如整體下跌時拉著抬升）
+    """
+    idx = curr_s.index.union(base_s.index)
+    curr = curr_s.reindex(idx).fillna(0)
+    base = base_s.reindex(idx).fillna(0)
+    delta = curr - base
+    total_delta = delta.sum()
+    delta_pct = pd.Series(
+        [(c - b) / b * 100 if b else None for c, b in zip(curr, base)],
+        index=idx,
+    )
+    contrib = (delta / total_delta * 100) if total_delta else pd.Series([None] * len(idx), index=idx)
+    return pd.DataFrame({
+        "curr": curr, "base": base,
+        "delta": delta, "delta_pct": delta_pct, "contrib_pct": contrib,
+    })
+
+
+def fmt_metric_value(v, fmt: str) -> str:
+    """格式化 metric 值。fmt='$' → money；'#' → 整數加千分位"""
+    if v is None or pd.isna(v):
+        return "—"
+    if fmt == "$":
+        return money(v)
+    return f"{int(round(v)):,}"
+
+
+# Focus metric 設定（WBR / MBR 共用 label 但 column 不同）
+WBR_FOCUS_METRICS = [
+    ("gms", "GMS", "$"),
+    ("new_fba_ba", "New FBA BA", "#"),
+    ("fba_ba", "FBA BA", "#"),
+    ("fba_awas", "FBA AWAS", "#"),
+    ("promo_count", "Promo Count", "#"),
+    ("promo_ops", "Promo OPS", "$"),
+    ("ads_spend", "Ads Spend", "$"),
+    ("ads_ops", "Ads OPS", "$"),
+]
+
+MBR_FOCUS_METRICS = [
+    ("mtd_ord_gms", "GMS", "$"),
+    ("mtd_new_fba_ba_90d", "New FBA BA", "#"),
+    ("mtd_fba_ba", "FBA BA", "#"),
+    ("mtd_fba_awas", "FBA AWAS", "#"),
+    ("mtd_deal_count", "Deal Count", "#"),
+    ("mtd_deal_ops", "Deal OPS", "$"),
+    ("mtd_promotion_count", "Promo Count", "#"),
+    ("mtd_promotion_ops", "Promo OPS", "$"),
+    ("mtd_coupon_count", "Coupon Count", "#"),
+    ("mtd_coupon_ops", "Coupon OPS", "$"),
+    ("mtd_sa_revenue_usd", "Ads Spend", "$"),
+    ("mtd_sa_attributed_ops_usd", "Ads OPS", "$"),
+]
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -563,14 +670,20 @@ with tab_perf:
                     ("promo_count", "Promo Count", "#"), ("promo_ops", "Promo OPS", "$"),
                     ("ads_spend", "Ads Spend", "$"), ("ads_ops", "Ads OPS", "$"),
                 ]
-                # Build YoY trending sparkline: each week's YoY%
+                # YoY sparkline — 一次 groupby 拿到 8 metric × N 週的值，避免雙層 loop 掃表
+                _wbr_metric_cols = [c for c, _, _ in _WBR_METRICS if c in src.columns]
+                _wbr_yw_agg = src.groupby(["year", "week"])[_wbr_metric_cols].sum()
                 _wbr_spark = {}
+                _sorted_weeks = sorted(all_weeks[:8])
                 for col, _, _ in _WBR_METRICS:
+                    if col not in _wbr_metric_cols:
+                        _wbr_spark[col] = []
+                        continue
                     vals = []
-                    for w in sorted(all_weeks[:8]):
-                        w_curr = src[(src["year"] == max_y) & (src["week"] == w)][col].sum()
-                        w_ly = perf_full_df[(perf_full_df["mcid"].isin(_group_mcids)) & (perf_full_df["year"] == max_y - 1) & (perf_full_df["week"] == w)][col].sum()
-                        vals.append(((w_curr / w_ly - 1) * 100) if w_ly else 0)
+                    for w in _sorted_weeks:
+                        c_v = _wbr_yw_agg.loc[(max_y, w), col] if (max_y, w) in _wbr_yw_agg.index else 0
+                        l_v = _wbr_yw_agg.loc[(max_y - 1, w), col] if (max_y - 1, w) in _wbr_yw_agg.index else 0
+                        vals.append(((c_v / l_v - 1) * 100) if l_v else 0)
                     _wbr_spark[col] = vals
 
                 st.caption("Key metrics YoY")
@@ -597,78 +710,287 @@ with tab_perf:
                             chart_type="line",
                         )
 
-            # Seller detail table
-            if not curr.empty:
-                # 載入 latest notes（WBR + MBR 共用）
+            # ── Focus-mode 變動分析（WBR）── 包成 fragment：切 focus / 對比 不重畫整頁
+            @st.fragment
+            def _wbr_focus_fragment():
+                if curr.empty:
+                    return
+                if USE_NEW_UI:
+                    st.markdown("**:material/insights: 變動分析**")
+                else:
+                    st.divider()
+                    st.subheader(":material/insights: 變動分析")
+
+                fa_col1, fa_col2 = st.columns([5, 1])
+                with fa_col1:
+                    _focus_widget = st.pills if USE_NEW_UI else st.segmented_control
+                    focus_label = _focus_widget(
+                        "Focus metric",
+                        [lbl for _, lbl, _ in WBR_FOCUS_METRICS],
+                        default="GMS", key="wbr_focus_metric",
+                    )
+                with fa_col2:
+                    cmp_choice = st.segmented_control(
+                        "對比", ["WoW", "YoY"],
+                        default="WoW", key="wbr_focus_cmp",
+                    )
+                if not focus_label:
+                    focus_label = "GMS"
+                if not cmp_choice:
+                    cmp_choice = "WoW"
+
+                focus_col, _, focus_fmt = next(
+                    (c, l, f) for c, l, f in WBR_FOCUS_METRICS if l == focus_label
+                )
+
+                curr_s = curr[focus_col] if focus_col in curr.columns else pd.Series(dtype=float)
+                if cmp_choice == "WoW":
+                    base_s = prev[focus_col] if (not prev.empty and focus_col in prev.columns) else pd.Series(dtype=float)
+                    base_label = f"W{pw}" if len(all_weeks) >= 2 else "上週"
+                else:
+                    base_s = ly[focus_col] if (not ly.empty and focus_col in ly.columns) else pd.Series(dtype=float)
+                    base_label = f"W{cw} {max_y - 1}"
+
+                total_curr = float(curr_s.sum())
+                total_base = float(base_s.sum())
+                total_delta = total_curr - total_base
+                total_delta_pct = pct_change(total_curr, total_base)
+
+                curr_label = f"W{cw} {max_y}"
+
+                # 算 8 週 sparkline（focus metric 趨勢）— reuse 已有的 _wbr_yw_agg
+                _spark_vals = []
+                if USE_NEW_UI:
+                    try:
+                        for w in sorted(all_weeks[:8]):
+                            v = _wbr_yw_agg.loc[(max_y, w), focus_col] if (max_y, w) in _wbr_yw_agg.index else 0
+                            _spark_vals.append(float(v))
+                    except Exception:
+                        _spark_vals = []
+
+                if USE_NEW_UI:
+                    with st.container(horizontal=True):
+                        st.metric(
+                            f"{focus_label}（{curr_label}）",
+                            fmt_metric_value(total_curr, focus_fmt),
+                            border=True,
+                            chart_data=_spark_vals if len(_spark_vals) >= 2 else None,
+                            chart_type="line",
+                        )
+                        st.metric(
+                            f"{focus_label}（{base_label}）",
+                            fmt_metric_value(total_base, focus_fmt),
+                            border=True,
+                        )
+                        _sign = "+" if total_delta >= 0 else "−"
+                        _delta_disp = _sign + (money(abs(total_delta)) if focus_fmt == "$" else f"{abs(total_delta):,.0f}")
+                        st.metric(f"Δ ({cmp_choice})", _delta_disp, border=True)
+                        st.metric(
+                            f"Δ % ({cmp_choice})",
+                            f"{total_delta_pct:+.1f}%" if total_delta_pct is not None else "—",
+                            border=True,
+                        )
+                else:
+                    summary_cols = st.columns(4)
+                    with summary_cols[0]:
+                        st.metric(f"{focus_label}（{curr_label}）", fmt_metric_value(total_curr, focus_fmt))
+                    with summary_cols[1]:
+                        st.metric(f"{focus_label}（{base_label}）", fmt_metric_value(total_base, focus_fmt))
+                    with summary_cols[2]:
+                        _sign = "+" if total_delta >= 0 else "−"
+                        _delta_disp = _sign + (money(abs(total_delta)) if focus_fmt == "$" else f"{abs(total_delta):,.0f}")
+                        st.metric("Δ", _delta_disp)
+                    with summary_cols[3]:
+                        st.metric(f"Δ % ({cmp_choice})", f"{total_delta_pct:+.1f}%" if total_delta_pct is not None else "—")
+
+                # ── Per-seller contribution + segment 拆解
+                contrib_df = build_contribution(curr_s, base_s)
+                _meta = sellers_df.set_index("mcid")[["tier", "owner", "cooperation_level", "spark_periods"]]
+                seg_df = contrib_df.join(_meta, how="left")
+                seg_df["spark_flag"] = seg_df["spark_periods"].fillna("").map(lambda s: "SPARK" if s else "非 SPARK")
+                seg_df["coop_label"] = seg_df["cooperation_level"].fillna("").replace("", "—")
+                seg_df["tier_label"] = seg_df["tier"].fillna("").map(lambda t: TIER_DISPLAY.get(t, t or "—"))
+
+                # Drill state（點 bar → 過濾下方表格）
+                _drill_key = "wbr_seg_drill"
+                _current_drill = st.session_state.get(_drill_key)  # (seg_col_key, seg_val) or None
+
+                drill_msg_col, drill_clear_col = st.columns([6, 1])
+                with drill_msg_col:
+                    if _current_drill:
+                        st.caption(
+                            f":material/filter_alt: Drill-down：{_current_drill[0].replace('_label', '').replace('_flag', '')} = **{_current_drill[1]}**（下方表格只顯示此 segment 的賣家）"
+                        )
+                    else:
+                        st.caption(f"Δ {focus_label}（{cmp_choice}）by segment — 條長 = 對整體變動的絕對貢獻；點 bar 可 drill down")
+                with drill_clear_col:
+                    if _current_drill and st.button("清除 drill", key="wbr_drill_clear"):
+                        st.session_state.pop(_drill_key, None)
+                        # 也清掉各 chart 的 selection
+                        for k in list(st.session_state.keys()):
+                            if k.startswith("wbr_seg_chart_"):
+                                st.session_state.pop(k, None)
+                        st.rerun()
+
+                SEG_DEFS = [("Tier", "tier_label"), ("Owner", "owner"),
+                            ("配合度", "coop_label")]
+                seg_cols = st.columns(3)
+                for (seg_title, seg_col_key), holder in zip(SEG_DEFS, seg_cols):
+                    agg = seg_df.groupby(seg_col_key)["delta"].sum().sort_values()
+                    if agg.empty:
+                        with holder:
+                            st.caption(f"by {seg_title}（無資料）")
+                        continue
+                    colors = ["#c62828" if v < 0 else "#2e7d32" for v in agg.values]
+                    text_vals = [
+                        (("+" if v >= 0 else "−") + (money(abs(v)) if focus_fmt == "$" else f"{abs(v):,.0f}"))
+                        for v in agg.values
+                    ]
+                    fig = go.Figure(go.Bar(
+                        x=agg.values, y=agg.index, orientation="h",
+                        marker_color=colors, text=text_vals, textposition="auto",
+                        textfont=dict(size=11),
+                        cliponaxis=False, constraintext="none",
+                        hovertemplate="%{y}: %{text}<extra></extra>",
+                    ))
+                    fig.update_layout(
+                        title=f"by {seg_title}",
+                        height=max(180, 60 + 28 * len(agg)),
+                        margin=dict(t=35, b=10, l=10, r=20),
+                        xaxis_title="", yaxis_title="", showlegend=False,
+                        clickmode="event+select",
+                    )
+                    _chart_key = f"wbr_seg_chart_{seg_col_key}"
+                    sel = holder.plotly_chart(
+                        fig, use_container_width=True,
+                        on_select="rerun", selection_mode="points",
+                        key=_chart_key,
+                    )
+                    # 處理點擊
+                    if sel and sel.get("selection", {}).get("points"):
+                        pt = sel["selection"]["points"][0]
+                        clicked_val = pt.get("y")
+                        if clicked_val is not None:
+                            new_drill = (seg_col_key, clicked_val)
+                            if st.session_state.get(_drill_key) != new_drill:
+                                st.session_state[_drill_key] = new_drill
+                                st.rerun()
+
+                # ── Detail table（focus-aware）──
                 _latest_notes_df = load_latest_notes()
                 _notes_map = {}
                 if not _latest_notes_df.empty:
                     for _, r in _latest_notes_df.iterrows():
                         _notes_map[r["mcid"]] = (r["content"], r["created_at"])
 
-                detail = curr[["gms", "ads_ops", "promo_ops", "ba", "fba_ba"]].copy()
-                detail = detail.reset_index()
                 _seller_cols = ["name", "tier", "owner", "q1_am", "q2_am",
                                 "cooperation_level", "line_bindind", "spark_periods"]
                 name_map = sellers_df.set_index("mcid")[_seller_cols].to_dict("index")
-                detail["name"] = detail["mcid"].map(lambda m: name_map.get(m, {}).get("name", m))
-                detail["tier"] = detail["mcid"].map(lambda m: name_map.get(m, {}).get("tier", ""))
-                detail["owner"] = detail["mcid"].map(lambda m: name_map.get(m, {}).get("owner", ""))
-                detail["q1_am"] = detail["mcid"].map(lambda m: name_map.get(m, {}).get("q1_am", "") or "")
-                detail["q2_am"] = detail["mcid"].map(lambda m: name_map.get(m, {}).get("q2_am", "") or "")
-                detail["coop"] = detail["mcid"].map(lambda m: name_map.get(m, {}).get("cooperation_level", "") or "—")
-                detail["line"] = detail["mcid"].map(lambda m: "是" if name_map.get(m, {}).get("line_bindind") else "否")
-                detail["spark"] = detail["mcid"].map(lambda m: name_map.get(m, {}).get("spark_periods", "") or "")
-                detail["latest_note"] = detail["mcid"].map(lambda m: _notes_map.get(m, ("", ""))[0])
-                detail["note_date"] = detail["mcid"].map(lambda m: _notes_map.get(m, ("", ""))[1])
 
-                # GMS WoW / YoY / CTC — 向量化計算（不用 iterrows）
-                _total_prev_gms = prev["gms"].sum() if not prev.empty else 0
-                _total_ly_gms = ly["gms"].sum() if not ly.empty else 0
+                # 套 drill filter（如果有）
+                _table_source = seg_df.copy()
+                if _current_drill:
+                    _dk, _dv = _current_drill
+                    if _dk in _table_source.columns:
+                        _table_source = _table_source[_table_source[_dk] == _dv]
 
-                _prev_gms_s = prev["gms"] if not prev.empty else pd.Series(dtype=float)
-                _ly_gms_s = ly["gms"] if not ly.empty else pd.Series(dtype=float)
+                # Top 貢獻者 mini-summary（按 |Δ| 取前 5）
+                _top_n = 5
+                _top = (
+                    _table_source.assign(_abs=_table_source["delta"].abs())
+                    .sort_values("_abs", ascending=False)
+                    .head(_top_n)
+                )
+                if not _top.empty:
+                    _name_lookup = sellers_df.set_index("mcid")["name"].to_dict()
+                    _bits = []
+                    for mcid, row in _top.iterrows():
+                        nm = _name_lookup.get(mcid, str(mcid))
+                        v = row["delta"]
+                        sign = "+" if v >= 0 else "−"
+                        disp = sign + (money(abs(v)) if focus_fmt == "$" else f"{abs(v):,.0f}")
+                        _bits.append(f"**{nm}** {disp}")
+                    _scope = (
+                        f"{_current_drill[0].replace('_label','').replace('_flag','')}={_current_drill[1]}"
+                        if _current_drill else "整體"
+                    )
+                    st.markdown(
+                        f":material/leaderboard: **Top {len(_top)} 貢獻者**（{_scope}，依 |Δ| 排序）："
+                        + "、".join(_bits)
+                    )
 
-                detail["_c"] = detail["mcid"].map(curr["gms"]).fillna(0)
-                detail["_p"] = detail["mcid"].map(_prev_gms_s).fillna(0)
-                detail["_l"] = detail["mcid"].map(_ly_gms_s).fillna(0)
+                table_df = _table_source.reset_index().rename(columns={"index": "mcid"})
+                if "mcid" not in table_df.columns:
+                    table_df = table_df.rename(columns={table_df.columns[0]: "mcid"})
+                table_df["名稱"] = table_df["mcid"].map(lambda m: name_map.get(m, {}).get("name", m))
+                table_df["Tier"] = table_df["mcid"].map(
+                    lambda m: TIER_DISPLAY.get(name_map.get(m, {}).get("tier", ""), name_map.get(m, {}).get("tier", "") or "")
+                )
+                table_df["Owner"] = table_df["mcid"].map(lambda m: name_map.get(m, {}).get("owner", ""))
+                table_df["配合度"] = table_df["mcid"].map(lambda m: name_map.get(m, {}).get("cooperation_level", "") or "—")
+                table_df["SPARK"] = table_df["mcid"].map(lambda m: name_map.get(m, {}).get("spark_periods", "") or "")
+                table_df["Latest Note"] = table_df["mcid"].map(lambda m: _notes_map.get(m, ("", ""))[0])
+                table_df["Note Date"] = table_df["mcid"].map(lambda m: _notes_map.get(m, ("", ""))[1])
 
-                detail["GMS WoW"] = detail.apply(lambda r: pct_change(r["_c"], r["_p"]), axis=1)
-                detail["GMS YoY"] = detail.apply(lambda r: pct_change(r["_c"], r["_l"]), axis=1)
-                detail["CTC WoW"] = (detail["_c"] - detail["_p"]) / _total_prev_gms * 100 if _total_prev_gms else None
-                detail["CTC YoY"] = (detail["_c"] - detail["_l"]) / _total_ly_gms * 100 if _total_ly_gms else None
-                detail.drop(columns=["_c", "_p", "_l"], inplace=True)
+                _curr_col_label = f"{focus_label}（{curr_label}）"
+                _base_col_label = f"{focus_label}（{base_label}）"
+                table_df[_curr_col_label] = table_df["curr"]
+                table_df[_base_col_label] = table_df["base"]
+                table_df["Δ"] = table_df["delta"]
+                table_df["Δ %"] = table_df["delta_pct"]
+                table_df["貢獻 %"] = table_df["contrib_pct"]
 
-                detail = detail.sort_values("gms", ascending=False)
-                detail = detail[["mcid", "name", "tier", "owner", "q1_am", "q2_am",
-                                 "coop", "line", "spark",
-                                 "gms", "GMS WoW", "GMS YoY", "CTC WoW", "CTC YoY",
-                                 "ads_ops", "promo_ops", "ba", "fba_ba",
-                                 "latest_note", "note_date"]]
-                detail.columns = ["MCID", "名稱", "Tier", "Owner", "Q1 AM", "Q2 AM",
-                                  "配合度", "LINE", "SPARK",
-                                  "GMS", "GMS WoW", "GMS YoY", "CTC WoW", "CTC YoY",
-                                  "Ads OPS", "Promo OPS", "BA", "FBA BA",
-                                  "Latest Note", "Note Date"]
+                aux_metrics = [(c, l, f) for c, l, f in WBR_FOCUS_METRICS if c != focus_col]
+                for ac, alabel, _ in aux_metrics:
+                    if ac in curr.columns:
+                        table_df[alabel] = table_df["mcid"].map(curr[ac]).fillna(0)
 
-                _n = group_seller_count
-                _gms_help = "GMS = Gross Merchandise Sales，該賣家本週在 Amazon NA（US+CA+MX）的總銷售金額（USD）。來源：PKEY 每週 sync。"
-                _ctc_wow_help = f"CTC WoW = (該賣家本週 GMS − 上週 GMS) ÷ ({_n}家上週總 GMS) × 100%。例：上週總 GMS = $300萬，A 賣家本週多了 $6萬 → CTC = +6/300 = +2.0%。全部加總 = 整體 WoW%。"
-                _ctc_yoy_help = f"CTC YoY = (該賣家本週 GMS − 去年同週 GMS) ÷ ({_n}家去年同週總 GMS) × 100%。例：去年同週總 GMS = $310萬，A 賣家掉了 $20萬 → CTC = −20/310 = −6.5%。全部加總 = 整體 YoY%。"
-                st.dataframe(detail, use_container_width=True, hide_index=True, height=400,
-                             column_config={
-                                 "GMS": st.column_config.NumberColumn("GMS", format="$%.0f", help=_gms_help),
-                                 "Ads OPS": st.column_config.NumberColumn("Ads OPS", format="$%.0f"),
-                                 "Promo OPS": st.column_config.NumberColumn("Promo OPS", format="$%.0f"),
-                                 "GMS WoW": st.column_config.NumberColumn("GMS WoW", help="該賣家 GMS 的 Week-over-Week 變化率"),
-                                 "GMS YoY": st.column_config.NumberColumn("GMS YoY", help="該賣家 GMS 的 Year-over-Year 變化率"),
-                                 "CTC WoW": st.column_config.NumberColumn("CTC WoW", help=_ctc_wow_help),
-                                 "CTC YoY": st.column_config.NumberColumn("CTC YoY", help=_ctc_yoy_help),
-                                 "Owner": st.column_config.TextColumn("Owner", help="當前負責此賣家的 AM（來源：每週 PKEY sync）。若與 Q2 AM 不同，代表交接尚未完成或暫時跨盤支援。"),
-                                 "LINE": st.column_config.TextColumn("LINE", help="LINE 綁定狀態（是/否）"),
-                                 "配合度": st.column_config.TextColumn("配合度"),
-                                 "Latest Note": st.column_config.TextColumn("Latest Note", width="large"),
-                             })
+                # 排序：依 |Δ| desc
+                table_df = (
+                    table_df.assign(_abs=table_df["delta"].abs())
+                    .sort_values("_abs", ascending=False)
+                    .drop(columns=["_abs", "curr", "base", "delta", "delta_pct", "contrib_pct"])
+                )
+
+                display_cols = ["mcid", "名稱", "Tier", "Owner", "配合度", "SPARK",
+                                _curr_col_label, _base_col_label, "Δ", "Δ %", "貢獻 %"]
+                display_cols += [l for _, l, _ in aux_metrics if l in table_df.columns]
+                display_cols += ["Latest Note", "Note Date"]
+                table_df = table_df[display_cols].rename(columns={"mcid": "MCID"})
+
+                _money_fmt = "$%.0f"
+                _int_fmt = "%d"
+                _cfg = {}
+                if focus_fmt == "$":
+                    _cfg[_curr_col_label] = st.column_config.NumberColumn(format=_money_fmt)
+                    _cfg[_base_col_label] = st.column_config.NumberColumn(format=_money_fmt)
+                    _cfg["Δ"] = st.column_config.NumberColumn(format=_money_fmt)
+                else:
+                    _cfg[_curr_col_label] = st.column_config.NumberColumn(format=_int_fmt)
+                    _cfg[_base_col_label] = st.column_config.NumberColumn(format=_int_fmt)
+                    _cfg["Δ"] = st.column_config.NumberColumn(format=_int_fmt)
+                _cfg["Δ %"] = st.column_config.NumberColumn(
+                    format="%+.1f%%",
+                    help=f"該賣家 {focus_label} 的 {cmp_choice} 變化率（個體層級）",
+                )
+                _cfg["貢獻 %"] = st.column_config.NumberColumn(
+                    format="%+.1f%%",
+                    help="該賣家 Δ ÷ 群體總 Δ × 100。+100% 代表整體變動全由他造成；負值代表他在反向（拉抬／拖累）。全部加總 = 100%。",
+                )
+                for ac, alabel, af in aux_metrics:
+                    if alabel in table_df.columns:
+                        _cfg[alabel] = st.column_config.NumberColumn(
+                            format=_money_fmt if af == "$" else _int_fmt
+                        )
+                _cfg["Owner"] = st.column_config.TextColumn(
+                    help="當前負責此賣家的 AM（來源：每週 PKEY sync）。"
+                )
+                _cfg["Latest Note"] = st.column_config.TextColumn(width="large")
+
+                st.dataframe(table_df, use_container_width=True, hide_index=True,
+                             height=420, column_config=_cfg)
+
+            _wbr_focus_fragment()
 
     elif view_choice == "MBR (Monthly)" and not perf_monthly_df.empty:
         # Monthly view
@@ -765,24 +1087,24 @@ with tab_perf:
                     _mbr_months_for_cards.add((max_y - 1, m))
 
                 @st.cache_data(ttl=120)
-                def _load_mbr_card_data(_mcids_tuple, _month_pairs_tuple, _cols_tuple):
-                    """Cached: 載入 MBR metric cards 需要的 pkey_raw_monthly 資料"""
+                def _load_mbr_card_data(_month_pairs_tuple, _cols_tuple):
+                    """Cached: 載入 MBR metric cards 需要的 pkey_raw_monthly 資料。
+                    不在 SQL 端 filter mcid（巨大 IN 反而比 index scan 慢且 cache key 太大），
+                    讀進來再用 pandas isin。Cache 跨 group 共用，切群體不用重撈。"""
                     conn = get_db_connection()
                     if conn is None:
                         return pd.DataFrame()
-                    mcid_list = list(_mcids_tuple)
-                    ph = ",".join(["?"] * len(mcid_list))
                     month_conds = " OR ".join([f"(year={y} AND month={m})" for y, m in _month_pairs_tuple])
-                    sql = f"SELECT {','.join(_cols_tuple)} FROM pkey_raw_monthly WHERE ({month_conds}) AND mcid IN ({ph})"
-                    df = pd.read_sql(sql, conn, params=mcid_list)
+                    sql = f"SELECT {','.join(_cols_tuple)} FROM pkey_raw_monthly WHERE ({month_conds})"
+                    df = pd.read_sql(sql, conn)
                     conn.close()
                     return df
 
-                _mbr_raw = _load_mbr_card_data(
-                    tuple(sorted(_group_mcids)),
+                _mbr_raw_all = _load_mbr_card_data(
                     tuple(sorted(_mbr_months_for_cards)),
                     tuple(_mbr_card_cols),
                 )
+                _mbr_raw = _mbr_raw_all[_mbr_raw_all["mcid"].isin(_group_mcids)] if not _mbr_raw_all.empty else _mbr_raw_all
 
                 if not _mbr_raw.empty:
                     # Aggregate by (year, month) for the group
@@ -836,78 +1158,313 @@ with tab_perf:
                                       delta_color="normal", help=_h, border=True,
                                       chart_data=_mbr_spark.get(col, []), chart_type="line")
 
-            # Seller detail
-            if not curr.empty:
-                # 載入 latest notes
-                _latest_notes_df = load_latest_notes()
-                _notes_map = {}
-                if not _latest_notes_df.empty:
-                    for _, r in _latest_notes_df.iterrows():
-                        _notes_map[r["mcid"]] = (r["content"], r["created_at"])
+            # ── Focus-mode 變動分析（MBR）── 包成 fragment：切 focus / 對比 不重畫整頁
+            @st.fragment
+            def _mbr_focus_fragment():
+                if curr.empty:
+                    return
+                if USE_NEW_UI:
+                    st.markdown("**:material/insights: 變動分析**")
+                else:
+                    st.divider()
+                    st.subheader(":material/insights: 變動分析")
 
-                detail = curr[["gms", "ads_ops", "promo_ops", "ba", "fba_ba"]].copy()
-                detail = detail.reset_index()
-                _seller_cols = ["name", "tier", "owner", "q1_am", "q2_am",
-                                "cooperation_level", "line_bindind", "spark_periods"]
-                name_map = sellers_df.set_index("mcid")[_seller_cols].to_dict("index")
-                detail["name"] = detail["mcid"].map(lambda m: name_map.get(m, {}).get("name", m))
-                detail["tier"] = detail["mcid"].map(lambda m: name_map.get(m, {}).get("tier", ""))
-                detail["owner"] = detail["mcid"].map(lambda m: name_map.get(m, {}).get("owner", ""))
-                detail["q1_am"] = detail["mcid"].map(lambda m: name_map.get(m, {}).get("q1_am", "") or "")
-                detail["q2_am"] = detail["mcid"].map(lambda m: name_map.get(m, {}).get("q2_am", "") or "")
-                detail["coop"] = detail["mcid"].map(lambda m: name_map.get(m, {}).get("cooperation_level", "") or "—")
-                detail["line"] = detail["mcid"].map(lambda m: "是" if name_map.get(m, {}).get("line_bindind") else "否")
-                detail["spark"] = detail["mcid"].map(lambda m: name_map.get(m, {}).get("spark_periods", "") or "")
-                detail["latest_note"] = detail["mcid"].map(lambda m: _notes_map.get(m, ("", ""))[0])
-                detail["note_date"] = detail["mcid"].map(lambda m: _notes_map.get(m, ("", ""))[1])
+                fa_col1, fa_col2 = st.columns([5, 1])
+                with fa_col1:
+                    _focus_widget = st.pills if USE_NEW_UI else st.segmented_control
+                    focus_label_m = _focus_widget(
+                        "Focus metric",
+                        [lbl for _, lbl, _ in MBR_FOCUS_METRICS],
+                        default="GMS", key="mbr_focus_metric",
+                    )
+                with fa_col2:
+                    cmp_choice_m = st.segmented_control(
+                        "對比", ["MoM", "YoY"],
+                        default="MoM", key="mbr_focus_cmp",
+                    )
+                if not focus_label_m:
+                    focus_label_m = "GMS"
+                if not cmp_choice_m:
+                    cmp_choice_m = "MoM"
 
-                # GMS MoM / YoY / CTC — 向量化計算
-                _total_prev_gms = prev["gms"].sum() if not prev.empty else 0
-                _total_ly_gms = ly["gms"].sum() if not ly.empty else 0
+                focus_col_m, _, focus_fmt_m = next(
+                    (c, l, f) for c, l, f in MBR_FOCUS_METRICS if l == focus_label_m
+                )
 
-                _prev_gms_s = prev["gms"] if not prev.empty else pd.Series(dtype=float)
-                _ly_gms_s = ly["gms"] if not ly.empty else pd.Series(dtype=float)
+                # 從 _mbr_raw（pkey_raw_monthly）拿 per-mcid focus metric series
+                # _mbr_raw 已在上面 metric cards 區段載入（cached）
+                _have_raw = '_mbr_raw' in dir() and not _mbr_raw.empty
+                if _have_raw and focus_col_m in _mbr_raw.columns:
+                    _by_mcid = _mbr_raw.groupby(["year", "month", "mcid"])[focus_col_m].sum()
+                    curr_s_m = _by_mcid.loc[(max_y, cm)] if (max_y, cm) in _by_mcid.index.droplevel("mcid").unique() else pd.Series(dtype=float)
+                    if cmp_choice_m == "MoM" and len(all_months) >= 2:
+                        base_s_m = _by_mcid.loc[(max_y, pm)] if (max_y, pm) in _by_mcid.index.droplevel("mcid").unique() else pd.Series(dtype=float)
+                        base_label_m = MONTH_NAMES.get(pm, str(pm))
+                    elif cmp_choice_m == "YoY":
+                        base_s_m = _by_mcid.loc[(max_y - 1, cm)] if (max_y - 1, cm) in _by_mcid.index.droplevel("mcid").unique() else pd.Series(dtype=float)
+                        base_label_m = f"{mon_label} {max_y - 1}"
+                    else:
+                        base_s_m = pd.Series(dtype=float)
+                        base_label_m = "—"
+                else:
+                    # Fallback：performance_monthly 只有 gms / ads_ops / promo_ops / ba / fba_ba
+                    _fallback_map = {"mtd_ord_gms": "gms", "mtd_sa_attributed_ops_usd": "ads_ops",
+                                     "mtd_promotion_ops": "promo_ops"}
+                    _fb_col = _fallback_map.get(focus_col_m)
+                    if _fb_col and _fb_col in curr.columns:
+                        curr_s_m = curr[_fb_col]
+                        if cmp_choice_m == "MoM":
+                            base_s_m = prev[_fb_col] if not prev.empty and _fb_col in prev.columns else pd.Series(dtype=float)
+                            base_label_m = MONTH_NAMES.get(pm, "上月") if len(all_months) >= 2 else "上月"
+                        else:
+                            base_s_m = ly[_fb_col] if not ly.empty and _fb_col in ly.columns else pd.Series(dtype=float)
+                            base_label_m = f"{mon_label} {max_y - 1}"
+                    else:
+                        st.info(f"沒有 {focus_label_m} 的 per-seller 資料（pkey_raw_monthly 未載入）")
+                        curr_s_m = base_s_m = pd.Series(dtype=float)
+                        base_label_m = "—"
 
-                detail["_c"] = detail["mcid"].map(curr["gms"]).fillna(0)
-                detail["_p"] = detail["mcid"].map(_prev_gms_s).fillna(0)
-                detail["_l"] = detail["mcid"].map(_ly_gms_s).fillna(0)
+                total_curr = float(curr_s_m.sum())
+                total_base = float(base_s_m.sum())
+                total_delta = total_curr - total_base
+                total_delta_pct = pct_change(total_curr, total_base)
 
-                detail["GMS MoM"] = detail.apply(lambda r: pct_change(r["_c"], r["_p"]), axis=1)
-                detail["GMS YoY"] = detail.apply(lambda r: pct_change(r["_c"], r["_l"]), axis=1)
-                detail["CTC MoM"] = (detail["_c"] - detail["_p"]) / _total_prev_gms * 100 if _total_prev_gms else None
-                detail["CTC YoY"] = (detail["_c"] - detail["_l"]) / _total_ly_gms * 100 if _total_ly_gms else None
-                detail.drop(columns=["_c", "_p", "_l"], inplace=True)
+                curr_label_m = f"{mon_label} {max_y}"
 
-                detail = detail.sort_values("gms", ascending=False)
-                detail = detail[["mcid", "name", "tier", "owner", "q1_am", "q2_am",
-                                 "coop", "line", "spark",
-                                 "gms", "GMS MoM", "GMS YoY", "CTC MoM", "CTC YoY",
-                                 "ads_ops", "promo_ops", "ba", "fba_ba",
-                                 "latest_note", "note_date"]]
-                detail.columns = ["MCID", "名稱", "Tier", "Owner", "Q1 AM", "Q2 AM",
-                                  "配合度", "LINE", "SPARK",
-                                  "GMS", "GMS MoM", "GMS YoY", "CTC MoM", "CTC YoY",
-                                  "Ads OPS", "Promo OPS", "BA", "FBA BA",
-                                  "Latest Note", "Note Date"]
+                # 算 6 月 sparkline trending（focus metric）— reuse _mbr_agg
+                _spark_vals_m = []
+                if USE_NEW_UI and _have_raw and focus_col_m in _mbr_raw.columns:
+                    try:
+                        _agg_ym = _mbr_raw.groupby(["year", "month"])[focus_col_m].sum()
+                        for m in sorted(all_months):
+                            v = _agg_ym.loc[(max_y, m)] if (max_y, m) in _agg_ym.index else 0
+                            _spark_vals_m.append(float(v))
+                    except Exception:
+                        _spark_vals_m = []
 
-                _n = group_seller_count
-                _gms_help_m = "GMS = Gross Merchandise Sales，該賣家本月在 Amazon NA（US+CA+MX）的總銷售金額（USD）。來源：MBR PKEY 每月 sync。"
-                _ctc_mom_help = f"CTC MoM = (該賣家本月 GMS − 上月 GMS) ÷ ({_n}家上月總 GMS) × 100%。例：上月總 GMS = $280萬，A 賣家本月多了 $5萬 → CTC = +5/280 = +1.8%。全部加總 = 整體 MoM%。"
-                _ctc_yoy_help_m = f"CTC YoY = (該賣家本月 GMS − 去年同月 GMS) ÷ ({_n}家去年同月總 GMS) × 100%。例：去年同月總 GMS = $310萬，A 賣家掉了 $20萬 → CTC = −20/310 = −6.5%。全部加總 = 整體 YoY%。"
-                st.dataframe(detail, use_container_width=True, hide_index=True, height=400,
-                             column_config={
-                                 "GMS": st.column_config.NumberColumn("GMS", format="$%.0f", help=_gms_help_m),
-                                 "Ads OPS": st.column_config.NumberColumn("Ads OPS", format="$%.0f"),
-                                 "Promo OPS": st.column_config.NumberColumn("Promo OPS", format="$%.0f"),
-                                 "GMS MoM": st.column_config.NumberColumn("GMS MoM", help="該賣家 GMS 的 Month-over-Month 變化率"),
-                                 "GMS YoY": st.column_config.NumberColumn("GMS YoY", help="該賣家 GMS 的 Year-over-Year 變化率"),
-                                 "CTC MoM": st.column_config.NumberColumn("CTC MoM", help=_ctc_mom_help),
-                                 "CTC YoY": st.column_config.NumberColumn("CTC YoY", help=_ctc_yoy_help_m),
-                                 "Owner": st.column_config.TextColumn("Owner", help="當前負責此賣家的 AM（來源：每週 PKEY sync）。若與 Q2 AM 不同，代表交接尚未完成或暫時跨盤支援。"),
-                                 "LINE": st.column_config.TextColumn("LINE", help="LINE 綁定狀態（是/否）"),
-                                 "配合度": st.column_config.TextColumn("配合度"),
-                                 "Latest Note": st.column_config.TextColumn("Latest Note", width="large"),
-                             })
+                if USE_NEW_UI:
+                    with st.container(horizontal=True):
+                        st.metric(
+                            f"{focus_label_m}（{curr_label_m}）",
+                            fmt_metric_value(total_curr, focus_fmt_m),
+                            border=True,
+                            chart_data=_spark_vals_m if len(_spark_vals_m) >= 2 else None,
+                            chart_type="line",
+                        )
+                        st.metric(
+                            f"{focus_label_m}（{base_label_m}）",
+                            fmt_metric_value(total_base, focus_fmt_m),
+                            border=True,
+                        )
+                        _sign = "+" if total_delta >= 0 else "−"
+                        _delta_disp = _sign + (money(abs(total_delta)) if focus_fmt_m == "$" else f"{abs(total_delta):,.0f}")
+                        st.metric(f"Δ ({cmp_choice_m})", _delta_disp, border=True)
+                        st.metric(
+                            f"Δ % ({cmp_choice_m})",
+                            f"{total_delta_pct:+.1f}%" if total_delta_pct is not None else "—",
+                            border=True,
+                        )
+                else:
+                    summary_cols = st.columns(4)
+                    with summary_cols[0]:
+                        st.metric(f"{focus_label_m}（{curr_label_m}）", fmt_metric_value(total_curr, focus_fmt_m))
+                    with summary_cols[1]:
+                        st.metric(f"{focus_label_m}（{base_label_m}）", fmt_metric_value(total_base, focus_fmt_m))
+                    with summary_cols[2]:
+                        _sign = "+" if total_delta >= 0 else "−"
+                        _delta_disp = _sign + (money(abs(total_delta)) if focus_fmt_m == "$" else f"{abs(total_delta):,.0f}")
+                        st.metric("Δ", _delta_disp)
+                    with summary_cols[3]:
+                        st.metric(f"Δ % ({cmp_choice_m})", f"{total_delta_pct:+.1f}%" if total_delta_pct is not None else "—")
+
+                if not curr_s_m.empty:
+                    contrib_df_m = build_contribution(curr_s_m, base_s_m)
+                    _meta_m = sellers_df.set_index("mcid")[["tier", "owner", "cooperation_level", "spark_periods"]]
+                    seg_df_m = contrib_df_m.join(_meta_m, how="left")
+                    seg_df_m["spark_flag"] = seg_df_m["spark_periods"].fillna("").map(lambda s: "SPARK" if s else "非 SPARK")
+                    seg_df_m["coop_label"] = seg_df_m["cooperation_level"].fillna("").replace("", "—")
+                    seg_df_m["tier_label"] = seg_df_m["tier"].fillna("").map(lambda t: TIER_DISPLAY.get(t, t or "—"))
+
+                    # Drill state
+                    _drill_key_m = "mbr_seg_drill"
+                    _current_drill_m = st.session_state.get(_drill_key_m)
+
+                    drill_msg_col_m, drill_clear_col_m = st.columns([6, 1])
+                    with drill_msg_col_m:
+                        if _current_drill_m:
+                            st.caption(
+                                f":material/filter_alt: Drill-down：{_current_drill_m[0].replace('_label', '').replace('_flag', '')} = **{_current_drill_m[1]}**（下方表格只顯示此 segment 的賣家）"
+                            )
+                        else:
+                            st.caption(f"Δ {focus_label_m}（{cmp_choice_m}）by segment — 條長 = 對整體變動的絕對貢獻；點 bar 可 drill down")
+                    with drill_clear_col_m:
+                        if _current_drill_m and st.button("清除 drill", key="mbr_drill_clear"):
+                            st.session_state.pop(_drill_key_m, None)
+                            for k in list(st.session_state.keys()):
+                                if k.startswith("mbr_seg_chart_"):
+                                    st.session_state.pop(k, None)
+                            st.rerun()
+
+                    SEG_DEFS_M = [("Tier", "tier_label"), ("Owner", "owner"),
+                                  ("配合度", "coop_label")]
+                    seg_cols_m = st.columns(3)
+                    for (seg_title, seg_col_key), holder in zip(SEG_DEFS_M, seg_cols_m):
+                        agg = seg_df_m.groupby(seg_col_key)["delta"].sum().sort_values()
+                        if agg.empty:
+                            with holder:
+                                st.caption(f"by {seg_title}（無資料）")
+                            continue
+                        colors = ["#c62828" if v < 0 else "#2e7d32" for v in agg.values]
+                        text_vals = [
+                            (("+" if v >= 0 else "−") + (money(abs(v)) if focus_fmt_m == "$" else f"{abs(v):,.0f}"))
+                            for v in agg.values
+                        ]
+                        fig = go.Figure(go.Bar(
+                            x=agg.values, y=agg.index, orientation="h",
+                            marker_color=colors, text=text_vals, textposition="auto",
+                            textfont=dict(size=11),
+                            cliponaxis=False, constraintext="none",
+                            hovertemplate="%{y}: %{text}<extra></extra>",
+                        ))
+                        fig.update_layout(
+                            title=f"by {seg_title}",
+                            height=max(180, 60 + 28 * len(agg)),
+                            margin=dict(t=35, b=10, l=10, r=20),
+                            xaxis_title="", yaxis_title="", showlegend=False,
+                            clickmode="event+select",
+                        )
+                        _chart_key = f"mbr_seg_chart_{seg_col_key}"
+                        sel = holder.plotly_chart(
+                            fig, use_container_width=True,
+                            on_select="rerun", selection_mode="points",
+                            key=_chart_key,
+                        )
+                        if sel and sel.get("selection", {}).get("points"):
+                            pt = sel["selection"]["points"][0]
+                            clicked_val = pt.get("y")
+                            if clicked_val is not None:
+                                new_drill = (seg_col_key, clicked_val)
+                                if st.session_state.get(_drill_key_m) != new_drill:
+                                    st.session_state[_drill_key_m] = new_drill
+                                    st.rerun()
+
+                    # ── Detail table（focus-aware）──
+                    _latest_notes_df = load_latest_notes()
+                    _notes_map = {}
+                    if not _latest_notes_df.empty:
+                        for _, r in _latest_notes_df.iterrows():
+                            _notes_map[r["mcid"]] = (r["content"], r["created_at"])
+
+                    _seller_cols = ["name", "tier", "owner", "q1_am", "q2_am",
+                                    "cooperation_level", "line_bindind", "spark_periods"]
+                    name_map = sellers_df.set_index("mcid")[_seller_cols].to_dict("index")
+
+                    # 套 drill filter
+                    _table_source_m = seg_df_m.copy()
+                    if _current_drill_m:
+                        _dk, _dv = _current_drill_m
+                        if _dk in _table_source_m.columns:
+                            _table_source_m = _table_source_m[_table_source_m[_dk] == _dv]
+
+                    # Top 貢獻者 mini-summary
+                    _top_n_m = 5
+                    _top_m = (
+                        _table_source_m.assign(_abs=_table_source_m["delta"].abs())
+                        .sort_values("_abs", ascending=False)
+                        .head(_top_n_m)
+                    )
+                    if not _top_m.empty:
+                        _name_lookup_m = sellers_df.set_index("mcid")["name"].to_dict()
+                        _bits_m = []
+                        for mcid, row in _top_m.iterrows():
+                            nm = _name_lookup_m.get(mcid, str(mcid))
+                            v = row["delta"]
+                            sign = "+" if v >= 0 else "−"
+                            disp = sign + (money(abs(v)) if focus_fmt_m == "$" else f"{abs(v):,.0f}")
+                            _bits_m.append(f"**{nm}** {disp}")
+                        _scope_m = (
+                            f"{_current_drill_m[0].replace('_label','').replace('_flag','')}={_current_drill_m[1]}"
+                            if _current_drill_m else "整體"
+                        )
+                        st.markdown(
+                            f":material/leaderboard: **Top {len(_top_m)} 貢獻者**（{_scope_m}，依 |Δ| 排序）："
+                            + "、".join(_bits_m)
+                        )
+
+                    table_df_m = _table_source_m.reset_index().rename(columns={"index": "mcid"})
+                    if "mcid" not in table_df_m.columns:
+                        table_df_m = table_df_m.rename(columns={table_df_m.columns[0]: "mcid"})
+                    table_df_m["名稱"] = table_df_m["mcid"].map(lambda m: name_map.get(m, {}).get("name", m))
+                    table_df_m["Tier"] = table_df_m["mcid"].map(
+                        lambda m: TIER_DISPLAY.get(name_map.get(m, {}).get("tier", ""), name_map.get(m, {}).get("tier", "") or "")
+                    )
+                    table_df_m["Owner"] = table_df_m["mcid"].map(lambda m: name_map.get(m, {}).get("owner", ""))
+                    table_df_m["配合度"] = table_df_m["mcid"].map(lambda m: name_map.get(m, {}).get("cooperation_level", "") or "—")
+                    table_df_m["SPARK"] = table_df_m["mcid"].map(lambda m: name_map.get(m, {}).get("spark_periods", "") or "")
+                    table_df_m["Latest Note"] = table_df_m["mcid"].map(lambda m: _notes_map.get(m, ("", ""))[0])
+                    table_df_m["Note Date"] = table_df_m["mcid"].map(lambda m: _notes_map.get(m, ("", ""))[1])
+
+                    _curr_col_label_m = f"{focus_label_m}（{curr_label_m}）"
+                    _base_col_label_m = f"{focus_label_m}（{base_label_m}）"
+                    table_df_m[_curr_col_label_m] = table_df_m["curr"]
+                    table_df_m[_base_col_label_m] = table_df_m["base"]
+                    table_df_m["Δ"] = table_df_m["delta"]
+                    table_df_m["Δ %"] = table_df_m["delta_pct"]
+                    table_df_m["貢獻 %"] = table_df_m["contrib_pct"]
+
+                    aux_metrics_m = [(c, l, f) for c, l, f in MBR_FOCUS_METRICS if c != focus_col_m]
+                    if _have_raw:
+                        _curr_by_mcid_all = _mbr_raw[(_mbr_raw["year"] == max_y) & (_mbr_raw["month"] == cm)].groupby("mcid").sum(numeric_only=True)
+                        for ac, alabel, _ in aux_metrics_m:
+                            if ac in _curr_by_mcid_all.columns:
+                                table_df_m[alabel] = table_df_m["mcid"].map(_curr_by_mcid_all[ac]).fillna(0)
+
+                    table_df_m = (
+                        table_df_m.assign(_abs=table_df_m["delta"].abs())
+                        .sort_values("_abs", ascending=False)
+                        .drop(columns=["_abs", "curr", "base", "delta", "delta_pct", "contrib_pct"])
+                    )
+
+                    display_cols = ["mcid", "名稱", "Tier", "Owner", "配合度", "SPARK",
+                                    _curr_col_label_m, _base_col_label_m, "Δ", "Δ %", "貢獻 %"]
+                    display_cols += [l for _, l, _ in aux_metrics_m if l in table_df_m.columns]
+                    display_cols += ["Latest Note", "Note Date"]
+                    table_df_m = table_df_m[display_cols].rename(columns={"mcid": "MCID"})
+
+                    _money_fmt = "$%.0f"
+                    _int_fmt = "%d"
+                    _cfg_m = {}
+                    if focus_fmt_m == "$":
+                        _cfg_m[_curr_col_label_m] = st.column_config.NumberColumn(format=_money_fmt)
+                        _cfg_m[_base_col_label_m] = st.column_config.NumberColumn(format=_money_fmt)
+                        _cfg_m["Δ"] = st.column_config.NumberColumn(format=_money_fmt)
+                    else:
+                        _cfg_m[_curr_col_label_m] = st.column_config.NumberColumn(format=_int_fmt)
+                        _cfg_m[_base_col_label_m] = st.column_config.NumberColumn(format=_int_fmt)
+                        _cfg_m["Δ"] = st.column_config.NumberColumn(format=_int_fmt)
+                    _cfg_m["Δ %"] = st.column_config.NumberColumn(
+                        format="%+.1f%%",
+                        help=f"該賣家 {focus_label_m} 的 {cmp_choice_m} 變化率（個體層級）",
+                    )
+                    _cfg_m["貢獻 %"] = st.column_config.NumberColumn(
+                        format="%+.1f%%",
+                        help="該賣家 Δ ÷ 群體總 Δ × 100。+100% 代表整體變動全由他造成；負值代表他在反向（拉抬／拖累）。全部加總 = 100%。",
+                    )
+                    for ac, alabel, af in aux_metrics_m:
+                        if alabel in table_df_m.columns:
+                            _cfg_m[alabel] = st.column_config.NumberColumn(
+                                format=_money_fmt if af == "$" else _int_fmt
+                            )
+                    _cfg_m["Owner"] = st.column_config.TextColumn(
+                        help="當前負責此賣家的 AM（來源：每週 PKEY sync）。"
+                    )
+                    _cfg_m["Latest Note"] = st.column_config.TextColumn(width="large")
+
+                    st.dataframe(table_df_m, use_container_width=True, hide_index=True,
+                                 height=420, column_config=_cfg_m)
+
+            _mbr_focus_fragment()
+
             with st.expander(f":material/table_chart: 全量底表（{mon_label} {max_y} · 144 欄）", expanded=False):
 
                 @st.cache_data(ttl=120)
