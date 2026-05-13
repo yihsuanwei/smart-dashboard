@@ -527,17 +527,17 @@ with tab_perf:
             st.caption(_group_label_tpl.format(f"W{cw} {max_y}"))
             k1, k2, k3, k4, k5, k6 = st.columns(6, gap="small")
             with k1:
-                st.metric("GMS", money(g_gms), delta=f"WoW {wow_gms:+.1f}%" if wow_gms is not None else None)
+                st.metric("GMS", money(g_gms), delta=f"{wow_gms:+.1f}% WoW" if wow_gms is not None else None)
             with k2:
                 st.metric("YoY", f"{yoy_gms:+.1f}%" if yoy_gms is not None else "N/A")
             with k3:
-                st.metric("YTD GMS", money(g_ytd), delta=f"YoY {yoy_ytd:+.1f}%" if yoy_ytd is not None else None)
+                st.metric("YTD GMS", money(g_ytd), delta=f"{yoy_ytd:+.1f}% YoY" if yoy_ytd is not None else None)
             with k4:
-                st.metric("Ads OPS", money(g_ads), delta=f"WoW {wow_ads:+.1f}%" if wow_ads is not None else None)
+                st.metric("Ads OPS", money(g_ads), delta=f"{wow_ads:+.1f}% WoW" if wow_ads is not None else None)
             with k5:
-                st.metric("Promo OPS", money(g_promo), delta=f"WoW {wow_promo:+.1f}%" if wow_promo is not None else None)
+                st.metric("Promo OPS", money(g_promo), delta=f"{wow_promo:+.1f}% WoW" if wow_promo is not None else None)
             with k6:
-                st.metric("BA", f"{g_ba:,}", delta=f"WoW {wow_ba:+.1f}%" if wow_ba is not None else None)
+                st.metric("BA", f"{g_ba:,}", delta=f"{wow_ba:+.1f}% WoW" if wow_ba is not None else None)
 
             # Trending: 最近 8 週 GMS
             trend_data = []
@@ -652,17 +652,19 @@ with tab_perf:
                                   "Latest Note", "Note Date"]
 
                 _n = group_seller_count
+                _gms_help = "GMS = Gross Merchandise Sales，該賣家本週在 Amazon NA（US+CA+MX）的總銷售金額（USD）。來源：PKEY 每週 sync。"
                 _ctc_wow_help = f"CTC WoW = (該賣家本週 GMS − 上週 GMS) ÷ ({_n}家上週總 GMS) × 100%。例：上週總 GMS = $300萬，A 賣家本週多了 $6萬 → CTC = +6/300 = +2.0%。全部加總 = 整體 WoW%。"
                 _ctc_yoy_help = f"CTC YoY = (該賣家本週 GMS − 去年同週 GMS) ÷ ({_n}家去年同週總 GMS) × 100%。例：去年同週總 GMS = $310萬，A 賣家掉了 $20萬 → CTC = −20/310 = −6.5%。全部加總 = 整體 YoY%。"
                 st.dataframe(detail, use_container_width=True, hide_index=True, height=400,
                              column_config={
-                                 "GMS": st.column_config.NumberColumn("GMS", format="$%.0f"),
+                                 "GMS": st.column_config.NumberColumn("GMS", format="$%.0f", help=_gms_help),
                                  "Ads OPS": st.column_config.NumberColumn("Ads OPS", format="$%.0f"),
                                  "Promo OPS": st.column_config.NumberColumn("Promo OPS", format="$%.0f"),
                                  "GMS WoW": st.column_config.NumberColumn("GMS WoW", help="該賣家 GMS 的 Week-over-Week 變化率"),
                                  "GMS YoY": st.column_config.NumberColumn("GMS YoY", help="該賣家 GMS 的 Year-over-Year 變化率"),
                                  "CTC WoW": st.column_config.NumberColumn("CTC WoW", help=_ctc_wow_help),
                                  "CTC YoY": st.column_config.NumberColumn("CTC YoY", help=_ctc_yoy_help),
+                                 "Owner": st.column_config.TextColumn("Owner", help="當前負責此賣家的 AM（來源：每週 PKEY sync）。若與 Q2 AM 不同，代表交接尚未完成或暫時跨盤支援。"),
                                  "LINE": st.column_config.TextColumn("LINE", help="LINE 綁定狀態（是/否）"),
                                  "配合度": st.column_config.TextColumn("配合度"),
                                  "Latest Note": st.column_config.TextColumn("Latest Note", width="large"),
@@ -716,17 +718,17 @@ with tab_perf:
             st.caption(_group_label_tpl.format(f"{mon_label} {max_y}"))
             k1, k2, k3, k4, k5, k6 = st.columns(6, gap="small")
             with k1:
-                st.metric("GMS", money(g_gms), delta=f"MoM {mom_gms:+.1f}%" if mom_gms is not None else None)
+                st.metric("GMS", money(g_gms), delta=f"{mom_gms:+.1f}% MoM" if mom_gms is not None else None)
             with k2:
                 st.metric("YoY", f"{yoy_gms:+.1f}%" if yoy_gms is not None else "N/A")
             with k3:
-                st.metric("YTD GMS", money(g_ytd), delta=f"YoY {yoy_ytd:+.1f}%" if yoy_ytd is not None else None)
+                st.metric("YTD GMS", money(g_ytd), delta=f"{yoy_ytd:+.1f}% YoY" if yoy_ytd is not None else None)
             with k4:
-                st.metric("Ads OPS", money(g_ads), delta=f"MoM {mom_ads:+.1f}%" if mom_ads is not None else None)
+                st.metric("Ads OPS", money(g_ads), delta=f"{mom_ads:+.1f}% MoM" if mom_ads is not None else None)
             with k5:
-                st.metric("Promo OPS", money(g_promo), delta=f"MoM {mom_promo:+.1f}%" if mom_promo is not None else None)
+                st.metric("Promo OPS", money(g_promo), delta=f"{mom_promo:+.1f}% MoM" if mom_promo is not None else None)
             with k6:
-                st.metric("BA", f"{g_ba:,}", delta=f"MoM {mom_ba:+.1f}%" if mom_ba is not None else None)
+                st.metric("BA", f"{g_ba:,}", delta=f"{mom_ba:+.1f}% MoM" if mom_ba is not None else None)
 
             # Trending: available months
             trend_data = []
@@ -889,17 +891,19 @@ with tab_perf:
                                   "Latest Note", "Note Date"]
 
                 _n = group_seller_count
+                _gms_help_m = "GMS = Gross Merchandise Sales，該賣家本月在 Amazon NA（US+CA+MX）的總銷售金額（USD）。來源：MBR PKEY 每月 sync。"
                 _ctc_mom_help = f"CTC MoM = (該賣家本月 GMS − 上月 GMS) ÷ ({_n}家上月總 GMS) × 100%。例：上月總 GMS = $280萬，A 賣家本月多了 $5萬 → CTC = +5/280 = +1.8%。全部加總 = 整體 MoM%。"
                 _ctc_yoy_help_m = f"CTC YoY = (該賣家本月 GMS − 去年同月 GMS) ÷ ({_n}家去年同月總 GMS) × 100%。例：去年同月總 GMS = $310萬，A 賣家掉了 $20萬 → CTC = −20/310 = −6.5%。全部加總 = 整體 YoY%。"
                 st.dataframe(detail, use_container_width=True, hide_index=True, height=400,
                              column_config={
-                                 "GMS": st.column_config.NumberColumn("GMS", format="$%.0f"),
+                                 "GMS": st.column_config.NumberColumn("GMS", format="$%.0f", help=_gms_help_m),
                                  "Ads OPS": st.column_config.NumberColumn("Ads OPS", format="$%.0f"),
                                  "Promo OPS": st.column_config.NumberColumn("Promo OPS", format="$%.0f"),
                                  "GMS MoM": st.column_config.NumberColumn("GMS MoM", help="該賣家 GMS 的 Month-over-Month 變化率"),
                                  "GMS YoY": st.column_config.NumberColumn("GMS YoY", help="該賣家 GMS 的 Year-over-Year 變化率"),
                                  "CTC MoM": st.column_config.NumberColumn("CTC MoM", help=_ctc_mom_help),
                                  "CTC YoY": st.column_config.NumberColumn("CTC YoY", help=_ctc_yoy_help_m),
+                                 "Owner": st.column_config.TextColumn("Owner", help="當前負責此賣家的 AM（來源：每週 PKEY sync）。若與 Q2 AM 不同，代表交接尚未完成或暫時跨盤支援。"),
                                  "LINE": st.column_config.TextColumn("LINE", help="LINE 綁定狀態（是/否）"),
                                  "配合度": st.column_config.TextColumn("配合度"),
                                  "Latest Note": st.column_config.TextColumn("Latest Note", width="large"),
@@ -1059,12 +1063,13 @@ with tab_spark:
 
         spark_display = spark_display.sort_values("GMS", ascending=False)
 
+        _gms_help_s = "GMS = Gross Merchandise Sales，該賣家本月在 Amazon NA（US+CA+MX）的總銷售金額（USD）。來源：MBR PKEY 每月 sync。"
         _ctc_mom_help_s = "CTC MoM = (該賣家本月 GMS − 上月 GMS) ÷ (34家上月總 GMS) × 100%。例：上月 34 家總 GMS = $280萬，A 賣家本月多了 $5萬 → CTC MoM = +5/280 = +1.8%。全部加總 = 整體 MoM%。"
         _ctc_yoy_help_s = "CTC YoY = (該賣家本月 GMS − 去年同月 GMS) ÷ (34家去年同月總 GMS) × 100%。例：去年同月 34 家總 GMS = $310萬，Phrozen 掉了 $20萬 → CTC YoY = −20/310 = −6.5%。全部加總 = 整體 YoY%。"
         _pct_cols_s = ["GMS MoM", "GMS YoY", "CTC MoM", "CTC YoY"]
         st.dataframe(spark_display, use_container_width=True, hide_index=True, height=500,
                      column_config={
-                         "GMS": st.column_config.NumberColumn("GMS", format="$%.0f"),
+                         "GMS": st.column_config.NumberColumn("GMS", format="$%.0f", help=_gms_help_s),
                          "Ads OPS": st.column_config.NumberColumn("Ads OPS", format="$%.0f"),
                          "Promo OPS": st.column_config.NumberColumn("Promo OPS", format="$%.0f"),
                          "GMS MoM": st.column_config.NumberColumn("GMS MoM", help="該賣家 GMS 的 Month-over-Month 變化率"),
