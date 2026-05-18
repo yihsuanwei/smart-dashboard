@@ -1,5 +1,5 @@
 import streamlit as st
-from utils import list_uploaded_files, load_data_fast, normalize_customer_id
+from utils import list_uploaded_files, load_data_fast, normalize_customer_id, inject_fonts
 import plotly.graph_objects as go
 
 
@@ -364,6 +364,7 @@ def show_customer_id_filter_tab(df, selected_file):
 
 
 st.set_page_config(page_title="Metrics Tracker", page_icon=":material/trending_up:", layout="wide")
+inject_fonts()
 st.title(":material/trending_up: Metrics Tracker")
 
 # 初始化 session_state 來保存數據

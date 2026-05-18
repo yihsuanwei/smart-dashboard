@@ -5,13 +5,26 @@ import sqlite3
 from pathlib import Path
 
 
+def inject_fonts():
+    """注入 Google Fonts。Streamlit 1.46+ 改 fontFaces TOML，但用 Google Fonts CSS link 簡單可靠。"""
+    import streamlit as st
+    st.markdown(
+        """
+        <link rel="preconnect" href="https://fonts.googleapis.com">
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@300;400;500;700;900&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 UPLOAD_DIR = Path("uploaded_data")
 UPLOAD_DIR.mkdir(exist_ok=True)
 
 SELLER_REGISTRY_PATH = UPLOAD_DIR / "seller_registry.json"
 
-# ivory-cli 的 crm.db 路徑（smart-dashboard 直接讀同一個 db）
-CRM_DB_PATH = Path(__file__).resolve().parent.parent / "ivory-cli" / "data" / "crm.db"
+_DOCS = next(p for p in Path(__file__).resolve().parents if p.name == "Documents")
+CRM_DB_PATH = _DOCS / "Work" / "CRM" / "ivory-cli" / "data" / "crm.db"
 
 
 def get_seller_meta(mcid: str) -> dict:

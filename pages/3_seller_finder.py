@@ -1,5 +1,5 @@
 import streamlit as st
-from utils import load_data_fast, list_uploaded_files
+from utils import load_data_fast, list_uploaded_files, inject_fonts
 import pandas as pd
 import plotly.express as px
 
@@ -739,6 +739,7 @@ def show_original_analysis_tab(df, selected_file):
 
 
 st.set_page_config(page_title="Seller Finder", page_icon=":material/person_search:", layout="wide")
+inject_fonts()
 st.title(":material/person_search: Seller Finder")
 
 # 初始化 session_state 來保存數據

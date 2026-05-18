@@ -1,5 +1,5 @@
 import streamlit as st
-from utils import list_uploaded_files, load_data_fast
+from utils import list_uploaded_files, load_data_fast, inject_fonts
 import pandas as pd
 import ai_insight
 
@@ -439,6 +439,7 @@ def calculate_yoy_mom_from_df(df, column_name, current_year, current_month):
 
 
 st.set_page_config(page_title="Performance Dashboard", page_icon=":material/analytics:", layout="wide")
+inject_fonts()
 st.title(":material/analytics: Performance Dashboard")
 
 # 增加空間

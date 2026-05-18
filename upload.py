@@ -4,7 +4,7 @@ from pathlib import Path
 from utils import (list_uploaded_files, load_data, UPLOAD_DIR, FILE_TYPES,
                    detect_file_type, scan_sellers_from_files,
                    load_seller_registry, save_seller_registry,
-                   _extract_seller_name, save_with_parquet)
+                   _extract_seller_name, save_with_parquet, inject_fonts)
 
 
 def normalize_customer_id(series: pd.Series) -> pd.Series:
@@ -135,6 +135,7 @@ def mcid_dialog(seller_keys):
 
 # ===== Streamlit UI =====
 st.set_page_config(page_title="Smart Dashboard - 資料處理", page_icon=":material/upload:", layout="wide")
+inject_fonts()
 st.title(":material/upload: 資料處理中心")
 st.markdown("上傳CSV檔案並進行資料處理，處理後的檔案可在其他頁面中使用")
 

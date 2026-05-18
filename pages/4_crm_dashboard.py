@@ -12,6 +12,7 @@ import json
 import plotly.express as px
 import plotly.graph_objects as go
 from pathlib import Path
+from utils import inject_fonts
 
 
 def _resolve_db_path() -> Path:
@@ -30,9 +31,9 @@ def _resolve_db_path() -> Path:
 
     home = Path.home()
     for cand in [
+        home / "Documents" / "Work" / "CRM" / "ivory-cli" / "data" / "crm.db",
         home / "Documents" / "Work" / "ivory-cli" / "data" / "crm.db",
         home / "Documents" / "Work" / "Tools" / "ivory-cli" / "data" / "crm.db",
-        home / "Documents" / "ivory-cli" / "data" / "crm.db",
     ]:
         if cand.exists():
             return cand
@@ -42,7 +43,7 @@ def _resolve_db_path() -> Path:
         cand = ancestor / "ivory-cli" / "data" / "crm.db"
         if cand.exists():
             return cand
-    return home / "Documents" / "Work" / "ivory-cli" / "data" / "crm.db"
+    return home / "Documents" / "Work" / "CRM" / "ivory-cli" / "data" / "crm.db"
 
 
 DB_PATH = _resolve_db_path()
@@ -185,6 +186,25 @@ def load_notes():
 
 
 @st.cache_data(ttl=120)
+def load_t12_gms_map():
+    """每個 mcid 的 T12 rolling GMS（最新月往前 12 個月加總，跨 marketplace）。
+
+    回傳 (window_label: str, gms_map: dict[str, float])。
+    window_label 例：'2025-05 ~ 2026-04'，給 column help 顯示用。
+    """
+    from band_utils import t12_window
+    from band_utils import load_t12_gms_map as _impl
+    conn = get_db_connection()
+    if conn is None:
+        return "", {}
+    sy, sm, ey, em = t12_window(conn)
+    label = f"{sy}-{sm:02d} ~ {ey}-{em:02d}" if sy else "no data"
+    gms_map = _impl(conn) if sy else {}
+    conn.close()
+    return label, gms_map
+
+
+@st.cache_data(ttl=120)
 def load_latest_notes():
     """只載入每個 mcid 最新一筆 note（賣家清單 / SPARK 用）"""
     conn = get_db_connection()
@@ -312,6 +332,7 @@ MBR_FOCUS_METRICS = [
 # ═══════════════════════════════════════════════════════════════
 
 st.set_page_config(page_title="CRM Dashboard", page_icon=":material/contacts:", layout="wide")
+inject_fonts()
 st.title(":material/contacts: CRM Dashboard")
 
 if not DB_PATH.exists():
@@ -687,19 +708,19 @@ with tab_perf:
                     _wbr_spark[col] = vals
 
                 st.caption("Key metrics YoY")
-                # All 8 metrics in one row
-                with st.container(horizontal=True):
-                    for col, label, fmt in _WBR_METRICS:
-                        c_val = curr[col].sum() if col in curr.columns else 0
-                        l_val = ly[col].sum() if col in ly.columns else 0
-                        yoy_v = pct_change(c_val, l_val)
-                        if fmt == "$":
-                            disp = f"${c_val/1e6:.2f}M" if abs(c_val) >= 1e6 else f"${c_val/1e3:.1f}K" if abs(c_val) >= 1e3 else f"${c_val:.0f}"
-                            _help = f"W{cw} {money(c_val)} vs LY {money(l_val)}"
-                        else:
-                            disp = f"{c_val:,.0f}"
-                            _help = f"W{cw} {c_val:,.0f} vs LY {l_val:,.0f}"
-                        _delta_str = f"{yoy_v:+.1f}% YoY" if yoy_v is not None else None
+                _wbr_cols = st.columns(len(_WBR_METRICS), gap="small")
+                for i, (col, label, fmt) in enumerate(_WBR_METRICS):
+                    c_val = curr[col].sum() if col in curr.columns else 0
+                    l_val = ly[col].sum() if col in ly.columns else 0
+                    yoy_v = pct_change(c_val, l_val)
+                    if fmt == "$":
+                        disp = f"${c_val/1e6:.2f}M" if abs(c_val) >= 1e6 else f"${c_val/1e3:.1f}K" if abs(c_val) >= 1e3 else f"${c_val:.0f}"
+                        _help = f"W{cw} {money(c_val)} vs LY {money(l_val)}"
+                    else:
+                        disp = f"{c_val:,.0f}"
+                        _help = f"W{cw} {c_val:,.0f} vs LY {l_val:,.0f}"
+                    _delta_str = f"{yoy_v:+.1f}% YoY" if yoy_v is not None else None
+                    with _wbr_cols[i]:
                         st.metric(
                             label, disp,
                             delta=_delta_str,
@@ -885,6 +906,8 @@ with tab_perf:
 
                 _seller_cols = ["name", "tier", "owner", "q1_am", "q2_am",
                                 "cooperation_level", "line_bindind", "spark_periods"]
+                if "q2_baseline_band" in sellers_df.columns:
+                    _seller_cols.append("q2_baseline_band")
                 name_map = sellers_df.set_index("mcid")[_seller_cols].to_dict("index")
 
                 # 套 drill filter（如果有）
@@ -914,10 +937,11 @@ with tab_perf:
                         f"{_current_drill[0].replace('_label','').replace('_flag','')}={_current_drill[1]}"
                         if _current_drill else "整體"
                     )
-                    st.markdown(
+                    _line = (
                         f":material/leaderboard: **Top {len(_top)} 貢獻者**（{_scope}，依 |Δ| 排序）："
                         + "、".join(_bits)
                     )
+                    st.markdown(_line.replace("$", "\\$"))
 
                 table_df = _table_source.reset_index().rename(columns={"index": "mcid"})
                 if "mcid" not in table_df.columns:
@@ -931,6 +955,27 @@ with tab_perf:
                 table_df["SPARK"] = table_df["mcid"].map(lambda m: name_map.get(m, {}).get("spark_periods", "") or "")
                 table_df["Latest Note"] = table_df["mcid"].map(lambda m: _notes_map.get(m, ("", ""))[0])
                 table_df["Note Date"] = table_df["mcid"].map(lambda m: _notes_map.get(m, ("", ""))[1])
+
+                # ── Band 5 欄（baseline = Q2 接手；current = T12 rolling GMS）──
+                from band_utils import band_chip, compute_band_progress, status_arrow
+                _t12_window_label, _t12_map = load_t12_gms_map()
+
+                def _band_for(m):
+                    baseline = (name_map.get(m, {}) or {}).get("q2_baseline_band", "") or ""
+                    t12 = float(_t12_map.get(m, 0) or 0)
+                    return baseline, t12, compute_band_progress(baseline, t12)
+
+                _band_results = table_df["mcid"].map(_band_for)
+                table_df["Q2 Band"] = _band_results.map(lambda t: band_chip(t[0]))
+                table_df["T12 GMS"] = _band_results.map(lambda t: t[1])
+                table_df["→ 下一階"] = _band_results.map(lambda t: t[2]["progress_clamped"])
+                table_df["差距 $"] = _band_results.map(lambda t: t[2]["gap_to_next"])
+                table_df["現況"] = _band_results.map(
+                    lambda t: (
+                        f"{status_arrow(t[2]['status'])} {t[2]['current_band']}".strip()
+                        if t[2]["current_band"] else ""
+                    )
+                )
 
                 _curr_col_label = f"{focus_label}（{curr_label}）"
                 _base_col_label = f"{focus_label}（{base_label}）"
@@ -952,10 +997,12 @@ with tab_perf:
                     .drop(columns=["_abs", "curr", "base", "delta", "delta_pct", "contrib_pct"])
                 )
 
-                display_cols = ["mcid", "名稱", "Tier", "Owner", "配合度", "SPARK",
-                                _curr_col_label, _base_col_label, "Δ", "Δ %", "貢獻 %"]
+                display_cols = ["mcid", "名稱", "Tier", "Owner", "配合度",
+                                "Q2 Band", "→ 下一階", "差距 $", "現況",
+                                "T12 GMS", _curr_col_label, _base_col_label,
+                                "Δ", "Δ %", "貢獻 %"]
                 display_cols += [l for _, l, _ in aux_metrics if l in table_df.columns]
-                display_cols += ["Latest Note", "Note Date"]
+                display_cols += ["SPARK", "Latest Note", "Note Date"]
                 table_df = table_df[display_cols].rename(columns={"mcid": "MCID"})
 
                 _money_fmt = "$%.0f"
@@ -986,6 +1033,33 @@ with tab_perf:
                     help="當前負責此賣家的 AM（來源：每週 PKEY sync）。"
                 )
                 _cfg["Latest Note"] = st.column_config.TextColumn(width="large")
+                _cfg["Q2 Band"] = st.column_config.TextColumn(
+                    help="Q2 接手時的 GMS Band（T12 2025FY，baseline）。"
+                         "來源：Q2 BoB sheet。「現況」欄是用 T12 rolling 反推的 band。",
+                    width="small",
+                )
+                _cfg["T12 GMS"] = st.column_config.NumberColumn(
+                    format="$%.0f",
+                    help=f"T12 rolling GMS — 最新月往前 12 個月加總（{_t12_window_label}）。"
+                         f"資料源 pkey_raw_monthly，每月 sync 後自動推進。",
+                )
+                _cfg["→ 下一階"] = st.column_config.ProgressColumn(
+                    format="percent", min_value=0, max_value=1,
+                    help="在「當前 band」區間內的 log scale 進度。"
+                         "100% = 達下一階上限",
+                )
+                _cfg["差距 $"] = st.column_config.NumberColumn(
+                    format="$%.0f",
+                    help="距「當前 band」上限的差距 ＝ 還差多少 $ 升階",
+                )
+                _cfg["現況"] = st.column_config.TextColumn(
+                    help=(
+                        f"字母 = T12 rolling GMS 對應的 band（口徑 = baseline）；"
+                        f"符號 = vs Q2 Band：↑=升階 ↓=掉階 —=持平。\n"
+                        f"T12 window：{_t12_window_label}"
+                    ),
+                    width="small",
+                )
 
                 st.dataframe(table_df, use_container_width=True, hide_index=True,
                              height=420, column_config=_cfg)
@@ -1125,9 +1199,10 @@ with tab_perf:
                         _mbr_spark[col] = vals
 
                     st.caption("Key metrics YoY")
-                    # Row 1: 6 metrics (Selection funnel)
-                    with st.container(horizontal=True):
-                        for col, label, fmt in _MBR_METRICS[:6]:
+
+                    def _render_mbr_row(metrics):
+                        cols = st.columns(6, gap="small")
+                        for i, (col, label, fmt) in enumerate(metrics):
                             c_val = _mbr_curr[col] if col in _mbr_curr.index else 0
                             l_val = _mbr_ly[col] if col in _mbr_ly.index else 0
                             yoy_v = pct_change(c_val, l_val)
@@ -1138,25 +1213,13 @@ with tab_perf:
                                 disp = f"{c_val:,.0f}"
                                 _h = f"{mon_label} {c_val:,.0f} vs LY {l_val:,.0f}"
                             _delta_str = f"{yoy_v:+.1f}% YoY" if yoy_v is not None else None
-                            st.metric(label, disp, delta=_delta_str,
-                                      delta_color="normal", help=_h, border=True,
-                                      chart_data=_mbr_spark.get(col, []), chart_type="line")
-                    # Row 2: 6 metrics (Promo + Ads)
-                    with st.container(horizontal=True):
-                        for col, label, fmt in _MBR_METRICS[6:]:
-                            c_val = _mbr_curr[col] if col in _mbr_curr.index else 0
-                            l_val = _mbr_ly[col] if col in _mbr_ly.index else 0
-                            yoy_v = pct_change(c_val, l_val)
-                            if fmt == "$":
-                                disp = f"${c_val/1e6:.2f}M" if abs(c_val) >= 1e6 else f"${c_val/1e3:.1f}K" if abs(c_val) >= 1e3 else f"${c_val:.0f}"
-                                _h = f"{mon_label} {money(c_val)} vs LY {money(l_val)}"
-                            else:
-                                disp = f"{c_val:,.0f}"
-                                _h = f"{mon_label} {c_val:,.0f} vs LY {l_val:,.0f}"
-                            _delta_str = f"{yoy_v:+.1f}% YoY" if yoy_v is not None else None
-                            st.metric(label, disp, delta=_delta_str,
-                                      delta_color="normal", help=_h, border=True,
-                                      chart_data=_mbr_spark.get(col, []), chart_type="line")
+                            with cols[i]:
+                                st.metric(label, disp, delta=_delta_str,
+                                          delta_color="normal", help=_h, border=True,
+                                          chart_data=_mbr_spark.get(col, []), chart_type="line")
+
+                    _render_mbr_row(_MBR_METRICS[:6])
+                    _render_mbr_row(_MBR_METRICS[6:])
 
             # ── Focus-mode 變動分析（MBR）── 包成 fragment：切 focus / 對比 不重畫整頁
             @st.fragment
@@ -1357,6 +1420,8 @@ with tab_perf:
 
                     _seller_cols = ["name", "tier", "owner", "q1_am", "q2_am",
                                     "cooperation_level", "line_bindind", "spark_periods"]
+                    if "q2_baseline_band" in sellers_df.columns:
+                        _seller_cols.append("q2_baseline_band")
                     name_map = sellers_df.set_index("mcid")[_seller_cols].to_dict("index")
 
                     # 套 drill filter
@@ -1386,10 +1451,11 @@ with tab_perf:
                             f"{_current_drill_m[0].replace('_label','').replace('_flag','')}={_current_drill_m[1]}"
                             if _current_drill_m else "整體"
                         )
-                        st.markdown(
+                        _line_m = (
                             f":material/leaderboard: **Top {len(_top_m)} 貢獻者**（{_scope_m}，依 |Δ| 排序）："
                             + "、".join(_bits_m)
                         )
+                        st.markdown(_line_m.replace("$", "\\$"))
 
                     table_df_m = _table_source_m.reset_index().rename(columns={"index": "mcid"})
                     if "mcid" not in table_df_m.columns:
@@ -1403,6 +1469,27 @@ with tab_perf:
                     table_df_m["SPARK"] = table_df_m["mcid"].map(lambda m: name_map.get(m, {}).get("spark_periods", "") or "")
                     table_df_m["Latest Note"] = table_df_m["mcid"].map(lambda m: _notes_map.get(m, ("", ""))[0])
                     table_df_m["Note Date"] = table_df_m["mcid"].map(lambda m: _notes_map.get(m, ("", ""))[1])
+
+                    # ── Band 5 欄（baseline = Q2 接手；current = T12 rolling GMS） ──
+                    from band_utils import band_chip, compute_band_progress, status_arrow
+                    _t12_window_label_m, _t12_map_m = load_t12_gms_map()
+
+                    def _band_for_m(mc):
+                        baseline = (name_map.get(mc, {}) or {}).get("q2_baseline_band", "") or ""
+                        t12 = float(_t12_map_m.get(mc, 0) or 0)
+                        return baseline, t12, compute_band_progress(baseline, t12)
+
+                    _band_results_m = table_df_m["mcid"].map(_band_for_m)
+                    table_df_m["Q2 Band"] = _band_results_m.map(lambda t: band_chip(t[0]))
+                    table_df_m["T12 GMS"] = _band_results_m.map(lambda t: t[1])
+                    table_df_m["→ 下一階"] = _band_results_m.map(lambda t: t[2]["progress_clamped"])
+                    table_df_m["差距 $"] = _band_results_m.map(lambda t: t[2]["gap_to_next"])
+                    table_df_m["現況"] = _band_results_m.map(
+                        lambda t: (
+                            f"{status_arrow(t[2]['status'])} {t[2]['current_band']}".strip()
+                            if t[2]["current_band"] else ""
+                        )
+                    )
 
                     _curr_col_label_m = f"{focus_label_m}（{curr_label_m}）"
                     _base_col_label_m = f"{focus_label_m}（{base_label_m}）"
@@ -1425,10 +1512,12 @@ with tab_perf:
                         .drop(columns=["_abs", "curr", "base", "delta", "delta_pct", "contrib_pct"])
                     )
 
-                    display_cols = ["mcid", "名稱", "Tier", "Owner", "配合度", "SPARK",
-                                    _curr_col_label_m, _base_col_label_m, "Δ", "Δ %", "貢獻 %"]
+                    display_cols = ["mcid", "名稱", "Tier", "Owner", "配合度",
+                                    "Q2 Band", "→ 下一階", "差距 $", "現況",
+                                    "T12 GMS", _curr_col_label_m, _base_col_label_m,
+                                    "Δ", "Δ %", "貢獻 %"]
                     display_cols += [l for _, l, _ in aux_metrics_m if l in table_df_m.columns]
-                    display_cols += ["Latest Note", "Note Date"]
+                    display_cols += ["SPARK", "Latest Note", "Note Date"]
                     table_df_m = table_df_m[display_cols].rename(columns={"mcid": "MCID"})
 
                     _money_fmt = "$%.0f"
@@ -1459,6 +1548,32 @@ with tab_perf:
                         help="當前負責此賣家的 AM（來源：每週 PKEY sync）。"
                     )
                     _cfg_m["Latest Note"] = st.column_config.TextColumn(width="large")
+                    _cfg_m["Q2 Band"] = st.column_config.TextColumn(
+                        help="Q2 接手時的 GMS Band（T12 2025FY，baseline）。"
+                             "來源：Q2 BoB sheet。「現況」欄是用 T12 rolling 反推的 band。",
+                        width="small",
+                    )
+                    _cfg_m["T12 GMS"] = st.column_config.NumberColumn(
+                        format="$%.0f",
+                        help=f"T12 rolling GMS — 最新月往前 12 個月加總（{_t12_window_label_m}）。"
+                             f"資料源 pkey_raw_monthly，每月 sync 後自動推進。",
+                    )
+                    _cfg_m["→ 下一階"] = st.column_config.ProgressColumn(
+                        format="percent", min_value=0, max_value=1,
+                        help="在「當前 band」區間內的 log scale 進度。100% = 達下一階上限",
+                    )
+                    _cfg_m["差距 $"] = st.column_config.NumberColumn(
+                        format="$%.0f",
+                        help="距「當前 band」上限的差距 ＝ 還差多少 $ 升階",
+                    )
+                    _cfg_m["現況"] = st.column_config.TextColumn(
+                        help=(
+                            f"字母 = T12 rolling GMS 對應的 band（口徑 = baseline）；"
+                            f"符號 = vs Q2 Band：↑=升階 ↓=掉階 —=持平。\n"
+                            f"T12 window：{_t12_window_label_m}"
+                        ),
+                        width="small",
+                    )
 
                     st.dataframe(table_df_m, use_container_width=True, hide_index=True,
                                  height=420, column_config=_cfg_m)
