@@ -23,8 +23,8 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 
 SELLER_REGISTRY_PATH = UPLOAD_DIR / "seller_registry.json"
 
-_DOCS = next(p for p in Path(__file__).resolve().parents if p.name == "Documents")
-CRM_DB_PATH = _DOCS / "Work" / "CRM" / "ivory-cli" / "data" / "crm.db"
+_DOCS = next((p for p in Path(__file__).resolve().parents if p.name == "Documents"), None)
+CRM_DB_PATH = (_DOCS / "Work" / "CRM" / "ivory-cli" / "data" / "crm.db") if _DOCS else Path("__no_crm_db__")
 
 
 def get_seller_meta(mcid: str) -> dict:
